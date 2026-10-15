@@ -1,10 +1,12 @@
+
 name: Build Amar Hisab APK
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-  workflow_dispatch:
+      - master
 
 permissions:
   contents: read
@@ -18,257 +20,209 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.47.5'
           channel: stable
+          flutter-version: "3.47.5"
           cache: true
 
-      - name: Recreate Android project
+      - name: Show Flutter version
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Check project files
+        run: |
+          test -f pubspec.yaml || {
+            echo "ERROR: pubspec.yaml not found"
+            exit 1
+          }
+
+          test -f lib/main.dart || {
+            echo "ERROR: lib/main.dart not found"
+            exit 1
+          }
+
+      - name: Regenerate Android platform files
         run: |
           rm -rf android
-          flutter create --platforms=android --org com.sydmahadi .
+          flutter create \
+            --platforms=android \
+            --org com.sydmahadi \
+            --project-name amar_hisab \
+            .
 
-      - name: Install Flutter dependencies
+      - name: Resolve Flutter dependencies
         run: flutter pub get
 
-      - name: Verify File Picker version
+      - name: Verify dependency versions
         run: |
-          flutter pub deps | grep -A 3 -B 2 file_picker
+          flutter pub deps
+          grep -n "file_picker:" pubspec.yaml
+          grep -n "share_plus:" pubspec.yaml
 
-      - name: Create launcher icon configuration
-        run: |
-          cat > flutter_launcher_icons.yaml <<'EOF'
-          flutter_launcher_icons:
-            android: true
-            ios: false
-            image_path: "icon.png"
-            adaptive_icon_background: "#0F5132"
-            adaptive_icon_foreground: "icon.png"
-          EOF
-
-      - name: Set Android app name
+      - name: Configure Android build
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          gradle = Path("android/app/build.gradle.kts")
 
-          if not manifest.exists():
-              raise SystemExit("ERROR: AndroidManifest.xml not found.")
+          if not gradle.exists():
+              gradle = Path("android/app/build.gradle")
 
-          content = manifest.read_text(encoding="utf-8")
-          updated, count = re.subn(
+          if not gradle.exists():
+              raise SystemExit("ERROR: Android app Gradle file not found")
+
+          content = gradle.read_text()
+
+          if gradle.name.endswith(".kts"):
+              content = re.sub(
+                  r'compileSdk\s*=\s*\d+',
+                  'compileSdk = 36',
+                  content,
+                  count=1
+              )
+
+              if "isCoreLibraryDesugaringEnabled" not in content:
+                  content = re.sub(
+                      r'(compileOptions\s*\{)',
+                      r'\1\n        isCoreLibraryDesugaringEnabled = true',
+                      content,
+                      count=1
+                  )
+
+              if "coreLibraryDesugaring(" not in content:
+                  dependency = (
+                      '\n    coreLibraryDesugaring('
+                      '"com.android.tools:desugar_jdk_libs:2.1.4")\n'
+                  )
+
+                  match = re.search(r'dependencies\s*\{', content)
+
+                  if match:
+                      pos = match.end()
+                      content = (
+                          content[:pos]
+                          + dependency
+                          + content[pos:]
+                      )
+                  else:
+                      content += (
+                          '\n\ndependencies {' + dependency + '}\n'
+                      )
+
+          else:
+              content = re.sub(
+                  r'compileSdk\s+\d+',
+                  'compileSdk 36',
+                  content,
+                  count=1
+              )
+
+              if "coreLibraryDesugaringEnabled" not in content:
+                  content = re.sub(
+                      r'(compileOptions\s*\{)',
+                      r'\1\n        coreLibraryDesugaringEnabled true',
+                      content,
+                      count=1
+                  )
+
+              if "coreLibraryDesugaring " not in content:
+                  dependency = (
+                      '\n    coreLibraryDesugaring '
+                      '"com.android.tools:desugar_jdk_libs:2.1.4"\n'
+                  )
+
+                  match = re.search(r'dependencies\s*\{', content)
+
+                  if match:
+                      pos = match.end()
+                      content = (
+                          content[:pos]
+                          + dependency
+                          + content[pos:]
+                      )
+                  else:
+                      content += (
+                          '\n\ndependencies {' + dependency + '}\n'
+                      )
+
+          gradle.write_text(content)
+          print("Android Gradle configuration updated.")
+          PY
+
+      - name: Enable AndroidX
+        run: |
+          cat > android/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=512m -XX:+HeapDumpOnOutOfMemoryError
+          android.useAndroidX=true
+          android.enableJetifier=true
+          EOF
+
+      - name: Configure app label
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/app/src/main/AndroidManifest.xml")
+          content = path.read_text()
+
+          content = re.sub(
               r'android:label="[^"]*"',
               'android:label="আমার হিসাব"',
               content,
               count=1
           )
 
-          if count == 0:
-              raise SystemExit("ERROR: android:label not found.")
-
-          manifest.write_text(updated, encoding="utf-8")
-          print("App name configured.")
+          path.write_text(content)
+          print("App label set.")
           PY
 
-      - name: Verify launcher icon
+      - name: Configure launcher icon
         run: |
-          if [ ! -f "icon.png" ]; then
-            echo "ERROR: icon.png missing from project root."
-            exit 1
+          if [ -f icon.png ]; then
+            cat > flutter_launcher_icons.yaml <<'EOF'
+          flutter_launcher_icons:
+            android: true
+            ios: false
+            image_path: "icon.png"
+            min_sdk_android: 21
+            adaptive_icon_background: "#0F5132"
+            adaptive_icon_foreground: "icon.png"
+          EOF
+
+            dart run flutter_launcher_icons \
+              -f flutter_launcher_icons.yaml
+          else
+            echo "WARNING: icon.png not found; default icon will be used."
           fi
 
-      - name: Generate launcher icon
+      - name: Clean project
+        run: flutter clean
+
+      - name: Get dependencies again
+        run: flutter pub get
+
+      - name: Verify generated plugin registration
         run: |
-          dart run flutter_launcher_icons -f flutter_launcher_icons.yaml
+          if [ -f android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java ]; then
+            cat android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+          else
+            echo "GeneratedPluginRegistrant.java not found at the expected path."
+            echo "Flutter may register plugins through another generated file."
+          fi
 
-      - name: Configure Android SDK and desugaring
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          candidates = [
-              Path("android/app/build.gradle.kts"),
-              Path("android/app/build.gradle"),
-          ]
-
-          gradle = next((p for p in candidates if p.exists()), None)
-
-          if gradle is None:
-              raise SystemExit("ERROR: App Gradle file not found.")
-
-          content = gradle.read_text(encoding="utf-8")
-          is_kts = gradle.name.endswith(".kts")
-
-          # Configure compileSdk 36.
-          patterns = (
-              [
-                  (r"\bcompileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
-                  (r"\bcompileSdk\s+[^\n]+", "compileSdk = 36"),
-              ]
-              if is_kts
-              else [
-                  (r"\bcompileSdkVersion\s+[^\n]+", "compileSdkVersion 36"),
-                  (r"\bcompileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
-                  (r"\bcompileSdk\s+[^\n]+", "compileSdk 36"),
-              ]
-          )
-
-          for pattern, replacement in patterns:
-              updated, count = re.subn(
-                  pattern, replacement, content, count=1
-              )
-              if count:
-                  content = updated
-                  break
-          else:
-              raise SystemExit("ERROR: compileSdk setting not found.")
-
-          # Enable core library desugaring.
-          match = re.search(r"\bcompileOptions\s*\{", content)
-
-          if not match:
-              raise SystemExit("ERROR: compileOptions block not found.")
-
-          if not re.search(
-              r"\bisCoreLibraryDesugaringEnabled\b|"
-              r"\bcoreLibraryDesugaringEnabled\b",
-              content
-          ):
-              setting = (
-                  "isCoreLibraryDesugaringEnabled = true"
-                  if is_kts
-                  else "coreLibraryDesugaringEnabled true"
-              )
-              pos = match.end()
-              content = (
-                  content[:pos]
-                  + "\n        " + setting
-                  + content[pos:]
-              )
-
-          # Add desugaring dependency.
-          if "desugar_jdk_libs" not in content:
-              dep_match = re.search(
-                  r"(?m)^dependencies\s*\{", content
-              )
-
-              dependency = (
-                  '    coreLibraryDesugaring('
-                  '"com.android.tools:desugar_jdk_libs:2.1.4")'
-                  if is_kts
-                  else
-                  "    coreLibraryDesugaring "
-                  "'com.android.tools:desugar_jdk_libs:2.1.4'"
-              )
-
-              if dep_match:
-                  opening = content.find("{", dep_match.start())
-                  depth = 0
-                  closing = None
-
-                  for i in range(opening, len(content)):
-                      if content[i] == "{":
-                          depth += 1
-                      elif content[i] == "}":
-                          depth -= 1
-                          if depth == 0:
-                              closing = i
-                              break
-
-                  if closing is None:
-                      raise SystemExit(
-                          "ERROR: dependencies block not closed."
-                      )
-
-                  content = (
-                      content[:closing]
-                      + "\n" + dependency + "\n"
-                      + content[closing:]
-                  )
-              else:
-                  content = (
-                      content.rstrip()
-                      + "\n\ndependencies {\n"
-                      + dependency
-                      + "\n}\n"
-                  )
-
-          gradle.write_text(content, encoding="utf-8")
-          print("compileSdk and desugaring configured.")
-          PY
-
-      - name: Patch gallery_saver_plus compileSdk
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          cache = Path.home() / ".pub-cache/hosted/pub.dev"
-
-          files = list(cache.glob(
-              "gallery_saver_plus-*/android/build.gradle"
-          ))
-          files += list(cache.glob(
-              "gallery_saver_plus-*/android/build.gradle.kts"
-          ))
-
-          for gradle in files:
-              content = gradle.read_text(encoding="utf-8")
-
-              content = re.sub(
-                  r"\bcompileSdkVersion\s+\d+",
-                  "compileSdkVersion 36",
-                  content
-              )
-              content = re.sub(
-                  r"\bcompileSdk\s*=\s*\d+",
-                  "compileSdk = 36",
-                  content
-              )
-              content = re.sub(
-                  r"\bcompileSdk\s+\d+",
-                  "compileSdk 36",
-                  content
-              )
-
-              gradle.write_text(content, encoding="utf-8")
-              print("Patched:", gradle)
-
-          if not files:
-              print("No gallery_saver_plus Gradle file found.")
-          PY
-
-      - name: Enable AndroidX
-        run: |
-          touch android/gradle.properties
-
-          grep -q '^android.useAndroidX=' android/gradle.properties \
-            || echo 'android.useAndroidX=true' >> android/gradle.properties
-
-          grep -q '^android.enableJetifier=' android/gradle.properties \
-            || echo 'android.enableJetifier=true' >> android/gradle.properties
-
-      - name: Regenerate Flutter plugin registration
-        run: |
-          flutter clean
-          flutter pub get
-
-          echo "Generated File Picker registration:"
-          grep -n "FilePickerPlugin" \
-            android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
-
-      - name: Analyze Flutter project
+      - name: Analyze Flutter code
         run: flutter analyze --no-fatal-infos
 
       - name: Build release APK
@@ -280,4 +234,3 @@ jobs:
           name: amar-hisab-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
-          retention-days: 14
