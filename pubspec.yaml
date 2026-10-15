@@ -33,7 +33,7 @@ dependencies:
   gallery_saver_plus: ^3.2.8
 
   # File selection and security
-  file_picker: ^11.0.3
+  file_picker: 11.0.3
   crypto: ^3.0.6
 
   # Notifications and background tasks
