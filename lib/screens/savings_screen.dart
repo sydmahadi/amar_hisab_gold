@@ -1,8 +1,12 @@
-import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
-import '../services/savings_service.dart';
-import '../services/app_settings.dart';
+import 'dart:math';
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../services/money_db.dart';
 
 class SavingsScreen extends StatefulWidget {
   const SavingsScreen({super.key});
@@ -12,566 +16,147 @@ class SavingsScreen extends StatefulWidget {
 }
 
 class _SavingsScreenState extends State<SavingsScreen> {
-  final SavingsService _service = SavingsService.instance;
+  static const String _passwordKey = 'savings_password_hash';
+  static const String _recoveryKey = 'savings_recovery_hash';
 
+  bool _authorized = false;
   bool _loading = true;
-  bool _unlocked = false;
-  bool _passwordSet = false;
+  List<Map<String, Object?>> _savings = [];
 
-  double _balance = 0;
-  double _deposits = 0;
-  double _withdrawals = 0;
+  bool get _bn =>
+      Localizations.localeOf(context).languageCode == 'bn';
 
-  List<Map<String, dynamic>> _entries = [];
+  String _hash(String value) =>
+      sha256.convert(value.trim().codeUnits).toString();
 
-  bool get _isBangla {
-    try {
-      return AppSettings.instance.t('appName') == 'আমার হিসাব';
-    } catch (_) {
-      return true;
-    }
-  }
-
-  String _t(String bn, String en) => _isBangla ? bn : en;
+  String _text(String bn, String en) => _bn ? bn : en;
 
   @override
   void initState() {
     super.initState();
-    _initialize();
-  }
-
-  Future<void> _initialize() async {
-    try {
-      await _service.init();
-      final passwordSet = await _service.isPasswordSet();
-
-      if (!mounted) return;
-
-      setState(() {
-        _passwordSet = passwordSet;
-        _loading = false;
-      });
-
-      if (!passwordSet) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _setupPassword();
-        });
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      _message('${_t('সমস্যা হয়েছে', 'Error')}: $e');
-    }
-  }
-
-  Future<void> _refresh() async {
-    final balance = await _service.getBalance();
-    final deposits = await _service.getTotalDeposits();
-    final withdrawals = await _service.getTotalWithdrawals();
-    final entries = await _service.getEntries();
-
-    if (!mounted) return;
-
-    setState(() {
-      _balance = balance;
-      _deposits = deposits;
-      _withdrawals = withdrawals;
-      _entries = entries;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _start();
     });
   }
 
-  void _message(String message) {
+  Future<void> _start() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedHash = prefs.getString(_passwordKey);
+
+    if (savedHash == null) {
+      await _setupPassword();
+    } else {
+      await _login();
+    }
+
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    if (_authorized) {
+      await _initializeSavingsTable();
+      await _loadSavings();
+    }
+
+    if (mounted) {
+      setState(() => _loading = false);
+    }
   }
 
-  String _money(double amount) {
-    return '৳${NumberFormat('#,##,##0.##').format(amount)}';
+  bool _validPassword(String value) {
+    return value.length >= 6 &&
+        RegExp(r'[A-Za-z]').hasMatch(value) &&
+        RegExp(r'[0-9]').hasMatch(value);
+  }
+
+  String _generateRecoveryCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    final random = Random.secure();
+
+    return List.generate(
+      12,
+      (_) => chars[random.nextInt(chars.length)],
+    ).join();
   }
 
   Future<void> _setupPassword() async {
-    final passwordController = TextEditingController();
-    final confirmController = TextEditingController();
+    final password = TextEditingController();
+    final confirm = TextEditingController();
+    String? error;
 
-    final result = await showDialog<bool>(
+    final accepted = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(_t('Savings নিরাপত্তা সেটআপ', 'Set up Savings security')),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _t(
-                    'Savings সুরক্ষিত রাখতে কমপক্ষে ৬ অক্ষরের পাসওয়ার্ড দিন।',
-                    'Set a password of at least 6 characters to protect Savings.',
-                  ),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: passwordController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: _t('নতুন পাসওয়ার্ড', 'New password'),
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: confirmController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: _t('পাসওয়ার্ড নিশ্চিত করুন', 'Confirm password'),
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            FilledButton(
-              onPressed: () {
-                if (passwordController.text.length < 6) {
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        _t(
-                          'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।',
-                          'Password must be at least 6 characters.',
-                        ),
-                      ),
-                    ),
-                  );
-                  return;
-                }
-
-                if (passwordController.text != confirmController.text) {
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        _t('পাসওয়ার্ড মিলছে না।', 'Passwords do not match.'),
-                      ),
-                    ),
-                  );
-                  return;
-                }
-
-                Navigator.pop(dialogContext, true);
-              },
-              child: Text(_t('সেট করুন', 'Set password')),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (result != true || !mounted) {
-      passwordController.dispose();
-      confirmController.dispose();
-      return;
-    }
-
-    try {
-      final recoveryCode = await _service.setupSecurity(
-        password: passwordController.text,
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        _passwordSet = true;
-        _unlocked = true;
-      });
-
-      await _showRecoveryCode(recoveryCode);
-      await _refresh();
-    } catch (e) {
-      _message('${_t('সেটআপ ব্যর্থ', 'Setup failed')}: $e');
-    } finally {
-      passwordController.dispose();
-      confirmController.dispose();
-    }
-  }
-
-  Future<void> _showRecoveryCode(String code) async {
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(_t('Recovery Code সংরক্ষণ করুন', 'Save your Recovery Code')),
-          content: SelectableText(
-            '${_t('আপনার Recovery Code:', 'Your Recovery Code:')}\n\n'
-            '$code\n\n'
-            '${_t(
-              'কোডটি নিরাপদ জায়গায় লিখে রাখুন। পাসওয়ার্ড ভুলে গেলে এটি প্রয়োজন হবে। এই কোড আবার দেখানো হবে না।',
-              'Keep this code somewhere safe. You will need it if you forget your password. It will not be shown again.',
-            )}',
-          ),
-          actions: [
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: Text(_t('সংরক্ষণ করেছি', 'I have saved it')),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _unlock() async {
-    final controller = TextEditingController();
-
-    final password = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(_t('Savings আনলক করুন', 'Unlock Savings')),
-          content: TextField(
-            controller: controller,
-            obscureText: true,
-            autofocus: true,
-            decoration: InputDecoration(
-              labelText: _t('পাসওয়ার্ড', 'Password'),
-              border: const OutlineInputBorder(),
-            ),
-            onSubmitted: (value) => Navigator.pop(dialogContext, value),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-                _forgotPassword();
-              },
-              child: Text(_t('পাসওয়ার্ড ভুলে গেছি', 'Forgot password?')),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(
-                dialogContext,
-                controller.text,
-              ),
-              child: Text(_t('আনলক', 'Unlock')),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (password == null) {
-      controller.dispose();
-      return;
-    }
-
-    try {
-      final valid = await _service.verifyPassword(password);
-
-      if (!mounted) return;
-
-      if (!valid) {
-        _message(_t('পাসওয়ার্ড সঠিক নয়।', 'Incorrect password.'));
-        return;
-      }
-
-      setState(() => _unlocked = true);
-      await _refresh();
-    } catch (e) {
-      _message('$e');
-    } finally {
-      controller.dispose();
-    }
-  }
-
-  Future<void> _forgotPassword() async {
-    final recoveryController = TextEditingController();
-    final passwordController = TextEditingController();
-    final confirmController = TextEditingController();
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(_t('পাসওয়ার্ড রিসেট', 'Reset password')),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: recoveryController,
-                  decoration: InputDecoration(
-                    labelText: _t('Recovery Code', 'Recovery Code'),
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: passwordController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: _t('নতুন পাসওয়ার্ড', 'New password'),
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: confirmController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: _t('পাসওয়ার্ড নিশ্চিত করুন', 'Confirm password'),
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(_t('বাতিল', 'Cancel')),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (passwordController.text.length < 6) {
-                  _message(
-                    _t(
-                      'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।',
-                      'Password must be at least 6 characters.',
-                    ),
-                  );
-                  return;
-                }
-
-                if (passwordController.text != confirmController.text) {
-                  _message(
-                    _t('পাসওয়ার্ড মিলছে না।', 'Passwords do not match.'),
-                  );
-                  return;
-                }
-
-                Navigator.pop(dialogContext, true);
-              },
-              child: Text(_t('রিসেট করুন', 'Reset')),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (result != true || !mounted) {
-      recoveryController.dispose();
-      passwordController.dispose();
-      confirmController.dispose();
-      return;
-    }
-
-    try {
-      await _service.resetPassword(
-        recoveryCode: recoveryController.text,
-        newPassword: passwordController.text,
-      );
-
-      if (!mounted) return;
-
-      setState(() => _unlocked = true);
-      await _refresh();
-
-      _message(_t('পাসওয়ার্ড পরিবর্তন হয়েছে।', 'Password has been reset.'));
-    } catch (e) {
-      _message('${_t('রিসেট ব্যর্থ', 'Reset failed')}: $e');
-    } finally {
-      recoveryController.dispose();
-      passwordController.dispose();
-      confirmController.dispose();
-    }
-  }
-
-  Future<void> _changePassword() async {
-    final oldController = TextEditingController();
-    final newController = TextEditingController();
-    final confirmController = TextEditingController();
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(_t('পাসওয়ার্ড পরিবর্তন', 'Change password')),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: oldController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: _t('পুরোনো পাসওয়ার্ড', 'Old password'),
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: newController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: _t('নতুন পাসওয়ার্ড', 'New password'),
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: confirmController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: _t('পাসওয়ার্ড নিশ্চিত করুন', 'Confirm password'),
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(_t('বাতিল', 'Cancel')),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (newController.text.length < 6 ||
-                    newController.text != confirmController.text) {
-                  _message(
-                    _t(
-                      'নতুন পাসওয়ার্ড যাচাই করুন।',
-                      'Check the new password and confirmation.',
-                    ),
-                  );
-                  return;
-                }
-                Navigator.pop(dialogContext, true);
-              },
-              child: Text(_t('পরিবর্তন', 'Change')),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (result != true || !mounted) {
-      oldController.dispose();
-      newController.dispose();
-      confirmController.dispose();
-      return;
-    }
-
-    try {
-      await _service.changePassword(
-        oldPassword: oldController.text,
-        newPassword: newController.text,
-      );
-
-      _message(_t('পাসওয়ার্ড পরিবর্তন হয়েছে।', 'Password changed.'));
-    } catch (e) {
-      _message('${_t('ব্যর্থ', 'Failed')}: $e');
-    } finally {
-      oldController.dispose();
-      newController.dispose();
-      confirmController.dispose();
-    }
-  }
-
-  Future<void> _addEntry(String type) async {
-    final amountController = TextEditingController();
-    final noteController = TextEditingController();
-
-    DateTime selectedDate = DateTime.now();
-
-    final result = await showDialog<bool>(
-      context: context,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: Text(
-                type == 'deposit'
-                    ? _t('Savings জমা', 'Add savings')
-                    : _t('Savings উত্তোলন', 'Withdraw savings'),
-              ),
+              title: Text(_text('Savings Password সেট করুন',
+                  'Set Savings Password')),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextField(
-                      controller: amountController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
+                    Text(
+                      _text(
+                        'পাসওয়ার্ডে অন্তত ৬টি অক্ষর থাকতে হবে এবং কমপক্ষে একটি ইংরেজি অক্ষর ও একটি সংখ্যা থাকতে হবে।',
+                        'Use at least 6 characters, including an English letter and a number.',
                       ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: password,
+                      obscureText: true,
                       decoration: InputDecoration(
-                        labelText: _t('টাকার পরিমাণ', 'Amount'),
-                        prefixText: '৳ ',
+                        labelText: _text('নতুন পাসওয়ার্ড',
+                            'New password'),
                         border: const OutlineInputBorder(),
                       ),
                     ),
                     const SizedBox(height: 12),
                     TextField(
-                      controller: noteController,
+                      controller: confirm,
+                      obscureText: true,
                       decoration: InputDecoration(
-                        labelText: _t('বিবরণ (ঐচ্ছিক)', 'Note (optional)'),
+                        labelText: _text('আবার লিখুন',
+                            'Confirm password'),
                         border: const OutlineInputBorder(),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        final picked = await showDatePicker(
-                          context: dialogContext,
-                          initialDate: selectedDate,
-                          firstDate: DateTime(2000),
-                          lastDate: DateTime.now().add(
-                            const Duration(days: 3650),
-                          ),
-                        );
-
-                        if (picked != null) {
-                          setDialogState(() => selectedDate = picked);
-                        }
-                      },
-                      icon: const Icon(Icons.calendar_month),
-                      label: Text(
-                        DateFormat('dd MMM yyyy').format(selectedDate),
+                    if (error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        error!,
+                        style: const TextStyle(color: Colors.red),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: Text(_t('বাতিল', 'Cancel')),
-                ),
                 FilledButton(
                   onPressed: () {
-                    final amount = double.tryParse(
-                      amountController.text.trim().replaceAll(',', ''),
-                    );
+                    if (!_validPassword(password.text)) {
+                      setDialogState(() {
+                        error = _text(
+                          'অক্ষর ও সংখ্যা-সহ কমপক্ষে ৬টি অক্ষর দিন।',
+                          'Use at least 6 characters with a letter and a number.',
+                        );
+                      });
+                      return;
+                    }
 
-                    if (amount == null ||
-                        !amount.isFinite ||
-                        amount <= 0) {
-                      _message(
-                        _t(
-                          'সঠিক টাকার পরিমাণ লিখুন।',
-                          'Enter a valid amount.',
-                        ),
-                      );
+                    if (password.text != confirm.text) {
+                      setDialogState(() {
+                        error = _text(
+                          'দুটি পাসওয়ার্ড মিলছে না।',
+                          'Passwords do not match.',
+                        );
+                      });
                       return;
                     }
 
                     Navigator.pop(dialogContext, true);
                   },
-                  child: Text(_t('সংরক্ষণ', 'Save')),
+                  child: Text(_text('সেট করুন', 'Set password')),
                 ),
               ],
             );
@@ -580,333 +165,815 @@ class _SavingsScreenState extends State<SavingsScreen> {
       },
     );
 
-    if (result != true || !mounted) {
-      amountController.dispose();
-      noteController.dispose();
+    if (accepted != true || !mounted) {
+      if (mounted) Navigator.pop(context);
       return;
     }
 
-    try {
-      final amount = double.parse(
-        amountController.text.trim().replaceAll(',', ''),
-      );
+    final recoveryCode = _generateRecoveryCode();
+    final prefs = await SharedPreferences.getInstance();
 
-      await _service.addEntry(
-        amount: amount,
-        type: type,
-        note: noteController.text,
-        date: selectedDate,
-      );
+    await prefs.setString(_passwordKey, _hash(password.text));
+    await prefs.setString(_recoveryKey, _hash(recoveryCode));
 
-      await _refresh();
-      _message(_t('লেনদেন সংরক্ষিত হয়েছে।', 'Transaction saved.'));
-    } catch (e) {
-      _message('${_t('লেনদেন ব্যর্থ', 'Transaction failed')}: $e');
-    } finally {
-      amountController.dispose();
-      noteController.dispose();
+    password.dispose();
+    confirm.dispose();
+
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_text('Recovery Code সংরক্ষণ করুন',
+            'Save your Recovery Code')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_text(
+              'পাসওয়ার্ড ভুলে গেলে এই কোড প্রয়োজন হবে। এটি নিরাপদ জায়গায় লিখে রাখুন।',
+              'You need this code if you forget your password. Store it somewhere safe.',
+            )),
+            const SizedBox(height: 16),
+            SelectableText(
+              recoveryCode,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 2,
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () {
+                Clipboard.setData(
+                  ClipboardData(text: recoveryCode),
+                );
+              },
+              icon: const Icon(Icons.copy),
+              label: Text(_text('কপি করুন', 'Copy code')),
+            ),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(_text('সংরক্ষণ করেছি', 'I saved it')),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    setState(() => _authorized = true);
+  }
+
+  Future<void> _login() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedHash = prefs.getString(_passwordKey);
+
+    if (savedHash == null) {
+      await _setupPassword();
+      return;
+    }
+
+    final password = TextEditingController();
+    String? error;
+
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(_text('Savings লক করা আছে',
+                  'Savings is locked')),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: password,
+                    obscureText: true,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: _text('পাসওয়ার্ড',
+                          'Password'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) {
+                      if (_hash(password.text) == savedHash) {
+                        Navigator.pop(dialogContext, 'login');
+                      } else {
+                        setDialogState(() {
+                          error = _text(
+                            'পাসওয়ার্ড সঠিক নয়।',
+                            'Incorrect password.',
+                          );
+                        });
+                      }
+                    },
+                  ),
+                  if (error != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      error!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () =>
+                      Navigator.pop(dialogContext, 'reset'),
+                  child: Text(_text(
+                    'Recovery Code',
+                    'Recovery Code',
+                  )),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    if (_hash(password.text) == savedHash) {
+                      Navigator.pop(dialogContext, 'login');
+                    } else {
+                      setDialogState(() {
+                        error = _text(
+                          'পাসওয়ার্ড সঠিক নয়।',
+                          'Incorrect password.',
+                        );
+                      });
+                    }
+                  },
+                  child: Text(_text('খুলুন', 'Unlock')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    password.dispose();
+
+    if (!mounted) return;
+
+    if (result == 'login') {
+      setState(() => _authorized = true);
+    } else if (result == 'reset') {
+      await _resetPassword();
+    } else {
+      Navigator.pop(context);
     }
   }
 
-  Widget _summaryCard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-  }) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: color.withValues(alpha: 0.13),
-              child: Icon(icon, color: color),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title),
-                  const SizedBox(height: 6),
-                  Text(
-                    value,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+  Future<void> _resetPassword() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedRecovery = prefs.getString(_recoveryKey);
+
+    if (savedRecovery == null) {
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+
+    final recovery = TextEditingController();
+    final password = TextEditingController();
+    final confirm = TextEditingController();
+    String? error;
+
+    final reset = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(_text(
+                'পাসওয়ার্ড রিসেট',
+                'Reset password',
+              )),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: recovery,
+                      decoration: InputDecoration(
+                        labelText: _text(
+                          'Recovery Code',
+                          'Recovery Code',
+                        ),
+                        border: const OutlineInputBorder(),
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: password,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: _text(
+                          'নতুন পাসওয়ার্ড',
+                          'New password',
+                        ),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: confirm,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: _text(
+                          'আবার লিখুন',
+                          'Confirm password',
+                        ),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    if (error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        error!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () =>
+                      Navigator.pop(dialogContext, false),
+                  child: Text(_text('বাতিল', 'Cancel')),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    if (_hash(recovery.text) != savedRecovery) {
+                      setDialogState(() {
+                        error = _text(
+                          'Recovery Code সঠিক নয়।',
+                          'Incorrect Recovery Code.',
+                        );
+                      });
+                      return;
+                    }
+
+                    if (!_validPassword(password.text)) {
+                      setDialogState(() {
+                        error = _text(
+                          'অক্ষর ও সংখ্যা-সহ কমপক্ষে ৬টি অক্ষর দিন।',
+                          'Use at least 6 characters with a letter and a number.',
+                        );
+                      });
+                      return;
+                    }
+
+                    if (password.text != confirm.text) {
+                      setDialogState(() {
+                        error = _text(
+                          'দুটি পাসওয়ার্ড মিলছে না।',
+                          'Passwords do not match.',
+                        );
+                      });
+                      return;
+                    }
+
+                    Navigator.pop(dialogContext, true);
+                  },
+                  child: Text(_text('রিসেট', 'Reset')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (reset == true) {
+      await prefs.setString(_passwordKey, _hash(password.text));
+    }
+
+    recovery.dispose();
+    password.dispose();
+    confirm.dispose();
+
+    if (!mounted) return;
+
+    if (reset == true) {
+      await _login();
+    } else {
+      Navigator.pop(context);
+    }
+  }
+
+  Future<void> _initializeSavingsTable() async {
+    final database = await MoneyDb.instance.db;
+
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS savings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        goal_amount REAL NOT NULL DEFAULT 0,
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      )
+    ''');
+  }
+
+  Future<void> _loadSavings() async {
+    final database = await MoneyDb.instance.db;
+    final rows = await database.query(
+      'savings',
+      orderBy: 'id DESC',
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _savings = rows;
+    });
+  }
+
+  double get _totalSavings {
+    return _savings.fold<double>(
+      0,
+      (total, item) =>
+          total + ((item['amount'] as num?)?.toDouble() ?? 0),
+    );
+  }
+
+  Future<void> _addSaving() async {
+    final title = TextEditingController();
+    final amount = TextEditingController();
+    final goal = TextEditingController();
+    final note = TextEditingController();
+    String? error;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(_text('নতুন সঞ্চয়',
+                  'New saving')),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: title,
+                      decoration: InputDecoration(
+                        labelText: _text('সঞ্চয়ের নাম',
+                            'Saving name'),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: amount,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: _text('জমার পরিমাণ',
+                            'Saved amount'),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: goal,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: _text('লক্ষ্যমাত্রা (ঐচ্ছিক)',
+                            'Target amount (optional)'),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: note,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        labelText: _text('নোট (ঐচ্ছিক)',
+                            'Note (optional)'),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    if (error != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        error!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () =>
+                      Navigator.pop(dialogContext, false),
+                  child: Text(_text('বাতিল', 'Cancel')),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final amountValue =
+                        double.tryParse(amount.text.trim());
+                    final goalValue = goal.text.trim().isEmpty
+                        ? 0.0
+                        : double.tryParse(goal.text.trim());
+
+                    if (title.text.trim().isEmpty ||
+                        amountValue == null ||
+                        amountValue < 0 ||
+                        goalValue == null ||
+                        goalValue < 0) {
+                      setDialogState(() {
+                        error = _text(
+                          'নাম ও সঠিক পরিমাণ লিখুন।',
+                          'Enter a name and valid amounts.',
+                        );
+                      });
+                      return;
+                    }
+
+                    final database = await MoneyDb.instance.db;
+
+                    await database.insert('savings', {
+                      'title': title.text.trim(),
+                      'amount': amountValue,
+                      'goal_amount': goalValue,
+                      'note': note.text.trim(),
+                      'created_at': DateTime.now().toIso8601String(),
+                    });
+
+                    if (dialogContext.mounted) {
+                      Navigator.pop(dialogContext, true);
+                    }
+                  },
+                  child: Text(_text('সংরক্ষণ',
+                      'Save')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    title.dispose();
+    amount.dispose();
+    goal.dispose();
+    note.dispose();
+
+    if (saved == true) {
+      await _loadSavings();
+    }
+  }
+
+  Future<void> _deleteSaving(int id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_text('সঞ্চয় মুছবেন?',
+            'Delete saving?')),
+        content: Text(_text(
+          'এই সঞ্চয়ের রেকর্ড মুছে যাবে।',
+          'This saving record will be deleted.',
+        )),
+        actions: [
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, false),
+            child: Text(_text('বাতিল', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, true),
+            child: Text(_text('মুছুন', 'Delete')),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final database = await MoneyDb.instance.db;
+    await database.delete(
+      'savings',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+
+    await _loadSavings();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (_loading) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(_text('সঞ্চয়', 'Savings')),
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (!_authorized) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(_text('সঞ্চয়', 'Savings')),
+        ),
+        body: Center(
+          child: Text(_text(
+            'সঞ্চয় খুলতে পাসওয়ার্ড প্রয়োজন।',
+            'Password is required to open Savings.',
+          )),
+        ),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_text('সঞ্চয়', 'Savings')),
+        actions: [
+          IconButton(
+            tooltip: _text('পাসওয়ার্ড পরিবর্তন',
+                'Change password'),
+            icon: const Icon(Icons.password_rounded),
+            onPressed: _changePassword,
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _addSaving,
+        icon: const Icon(Icons.add),
+        label: Text(_text('সঞ্চয় যোগ', 'Add saving')),
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadSavings,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _text('মোট সঞ্চয়', 'Total savings'),
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _totalSavings.toStringAsFixed(2),
+                      style: theme.textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _text(
+                        'রেকর্ড: ${_savings.length}টি',
+                        'Records: ${_savings.length}',
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
+            const SizedBox(height: 12),
+            if (_savings.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 48),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.savings_outlined,
+                      size: 64,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _text(
+                        'এখনও কোনো সঞ্চয় যোগ করা হয়নি।',
+                        'No savings added yet.',
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ..._savings.map((item) {
+                final id = item['id'] as int;
+                final savedAmount =
+                    (item['amount'] as num).toDouble();
+                final target =
+                    (item['goal_amount'] as num).toDouble();
+                final progress = target > 0
+                    ? (savedAmount / target).clamp(0.0, 1.0)
+                    : 0.0;
+
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor:
+                          theme.colorScheme.primaryContainer,
+                      child: Icon(
+                        Icons.savings_rounded,
+                        color: theme.colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                    title: Text(
+                      item['title'] as String,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 6),
+                        Text(
+                          '${_text('জমা', 'Saved')}: '
+                          '${savedAmount.toStringAsFixed(2)}',
+                        ),
+                        if (target > 0) ...[
+                          const SizedBox(height: 8),
+                          LinearProgressIndicator(value: progress),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${_text('লক্ষ্য', 'Target')}: '
+                            '${target.toStringAsFixed(2)} '
+                            '(${(progress * 100).toStringAsFixed(0)}%)',
+                          ),
+                        ],
+                        if ((item['note'] as String).isNotEmpty)
+                          Text(item['note'] as String),
+                      ],
+                    ),
+                    trailing: IconButton(
+                      tooltip: _text('মুছুন', 'Delete'),
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _deleteSaving(id),
+                    ),
+                    isThreeLine: target > 0,
+                  ),
+                );
+              }),
+            const SizedBox(height: 80),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildUnlockedContent() {
-    return RefreshIndicator(
-      onRefresh: _refresh,
-      child: ListView(
-        padding: const EdgeInsets.all(12),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [
-                  Color(0xFF0F5132),
-                  Color(0xFF176B45),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _t('মোট Savings ব্যালেন্স', 'Total savings balance'),
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 15,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  _money(_balance),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 30,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
+  Future<void> _changePassword() async {
+    final prefs = await SharedPreferences.getInstance();
+    final oldHash = prefs.getString(_passwordKey);
+
+    if (oldHash == null) return;
+
+    final oldPassword = TextEditingController();
+    final newPassword = TextEditingController();
+    final confirmPassword = TextEditingController();
+    String? error;
+
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(_text(
+                'পাসওয়ার্ড পরিবর্তন',
+                'Change password',
+              )),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF0F5132),
+                    TextField(
+                      controller: oldPassword,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: _text(
+                          'বর্তমান পাসওয়ার্ড',
+                          'Current password',
                         ),
-                        onPressed: () => _addEntry('deposit'),
-                        icon: const Icon(Icons.add),
-                        label: Text(_t('জমা', 'Deposit')),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          side: const BorderSide(color: Colors.white),
+                    TextField(
+                      controller: newPassword,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: _text(
+                          'নতুন পাসওয়ার্ড',
+                          'New password',
                         ),
-                        onPressed: () => _addEntry('withdraw'),
-                        icon: const Icon(Icons.remove),
-                        label: Text(_t('উত্তোলন', 'Withdraw')),
                       ),
                     ),
+                    TextField(
+                      controller: confirmPassword,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: _text(
+                          'আবার লিখুন',
+                          'Confirm password',
+                        ),
+                      ),
+                    ),
+                    if (error != null)
+                      Text(
+                        error!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
                   ],
                 ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () =>
+                      Navigator.pop(dialogContext, false),
+                  child: Text(_text('বাতিল', 'Cancel')),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    if (_hash(oldPassword.text) != oldHash) {
+                      setDialogState(() {
+                        error = _text(
+                          'বর্তমান পাসওয়ার্ড সঠিক নয়।',
+                          'Current password is incorrect.',
+                        );
+                      });
+                      return;
+                    }
+
+                    if (!_validPassword(newPassword.text)) {
+                      setDialogState(() {
+                        error = _text(
+                          'অক্ষর ও সংখ্যা-সহ কমপক্ষে ৬টি অক্ষর দিন।',
+                          'Use at least 6 characters with a letter and a number.',
+                        );
+                      });
+                      return;
+                    }
+
+                    if (newPassword.text != confirmPassword.text) {
+                      setDialogState(() {
+                        error = _text(
+                          'দুটি পাসওয়ার্ড মিলছে না।',
+                          'Passwords do not match.',
+                        );
+                      });
+                      return;
+                    }
+
+                    Navigator.pop(dialogContext, true);
+                  },
+                  child: Text(_text('পরিবর্তন',
+                      'Change')),
+                ),
               ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          _summaryCard(
-            title: _t('মোট জমা', 'Total deposits'),
-            value: _money(_deposits),
-            icon: Icons.savings,
-            color: Colors.green,
-          ),
-          _summaryCard(
-            title: _t('মোট উত্তোলন', 'Total withdrawals'),
-            value: _money(_withdrawals),
-            icon: Icons.money_off,
-            color: Colors.orange,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _t('Savings লেনদেন', 'Savings transactions'),
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-              ),
-              IconButton(
-                tooltip: _t('পাসওয়ার্ড পরিবর্তন', 'Change password'),
-                onPressed: _changePassword,
-                icon: const Icon(Icons.lock_reset),
-              ),
-            ],
-          ),
-          if (_entries.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 32),
-              child: Center(
-                child: Text(
-                  _t('এখনও কোনো লেনদেন নেই।', 'No transactions yet.'),
-                ),
-              ),
-            )
-          else
-            ..._entries.map((entry) {
-              final isDeposit = entry['type'] == 'deposit';
-              final amount = (entry['amount'] as num).toDouble();
-              final date = DateTime.tryParse(
-                entry['entry_date']?.toString() ?? '',
-              );
-
-              return Card(
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: isDeposit
-                        ? Colors.green.withValues(alpha: 0.12)
-                        : Colors.orange.withValues(alpha: 0.12),
-                    child: Icon(
-                      isDeposit ? Icons.add : Icons.remove,
-                      color: isDeposit ? Colors.green : Colors.orange,
-                    ),
-                  ),
-                  title: Text(
-                    '${isDeposit ? '+' : '-'}${_money(amount)}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: isDeposit ? Colors.green : Colors.orange,
-                    ),
-                  ),
-                  subtitle: Text(
-                    [
-                      if ((entry['note'] as String? ?? '').isNotEmpty)
-                        entry['note'] as String,
-                      if (date != null)
-                        DateFormat('dd MMM yyyy').format(date),
-                    ].join(' • '),
-                  ),
-                  trailing: IconButton(
-                    tooltip: _t('মুছুন', 'Delete'),
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () => _confirmDelete(
-                      entry['id'] as int,
-                    ),
-                  ),
-                ),
-              );
-            }),
-          const SizedBox(height: 20),
-          OutlinedButton.icon(
-            onPressed: () {
-              setState(() => _unlocked = false);
-            },
-            icon: const Icon(Icons.lock),
-            label: Text(_t('Savings লক করুন', 'Lock Savings')),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _confirmDelete(int id) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(_t('লেনদেন মুছবেন?', 'Delete transaction?')),
-        content: Text(
-          _t(
-            'এই Savings লেনদেনটি মুছে ফেলা হবে।',
-            'This Savings transaction will be deleted.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(_t('বাতিল', 'Cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(_t('মুছুন', 'Delete')),
-          ),
-        ],
-      ),
+            );
+          },
+        );
+      },
     );
 
-    if (confirm != true) return;
+    if (changed == true) {
+      await prefs.setString(
+        _passwordKey,
+        _hash(newPassword.text),
+      );
 
-    try {
-      await _service.deleteEntry(id);
-      await _refresh();
-      _message(_t('লেনদেন মুছে ফেলা হয়েছে।', 'Transaction deleted.'));
-    } catch (e) {
-      _message('$e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_text(
+              'পাসওয়ার্ড পরিবর্তন হয়েছে।',
+              'Password changed.',
+            )),
+          ),
+        );
+      }
     }
-  }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_t('Savings', 'Savings')),
-        actions: [
-          if (_unlocked)
-            IconButton(
-              tooltip: _t('লক করুন', 'Lock'),
-              onPressed: () => setState(() => _unlocked = false),
-              icon: const Icon(Icons.lock_outline),
-            ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : !_passwordSet
-              ? Center(
-                  child: FilledButton.icon(
-                    onPressed: _setupPassword,
-                    icon: const Icon(Icons.lock),
-                    label: Text(
-                      _t('Savings নিরাপত্তা সেট করুন', 'Set up Savings security'),
-                    ),
-                  ),
-                )
-              : !_unlocked
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.savings, size: 70),
-                            const SizedBox(height: 16),
-                            Text(
-                              _t(
-                                'Savings সুরক্ষিত আছে',
-                                'Savings is locked',
-                              ),
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                            const SizedBox(height: 16),
-                            FilledButton.icon(
-                              onPressed: _unlock,
-                              icon: const Icon(Icons.lock_open),
-                              label: Text(_t('আনলক করুন', 'Unlock')),
-                            ),
-                            TextButton(
-                              onPressed: _forgotPassword,
-                              child: Text(
-                                _t(
-                                  'Recovery Code দিয়ে পাসওয়ার্ড রিসেট',
-                                  'Reset with Recovery Code',
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )
-                  : _buildUnlockedContent(),
-    );
+    oldPassword.dispose();
+    newPassword.dispose();
+    confirmPassword.dispose();
   }
 }
