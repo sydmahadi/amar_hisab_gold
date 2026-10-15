@@ -31,13 +31,20 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate Android project
+      - name: Recreate Android project
         run: |
           rm -rf android
           flutter create --platforms=android --org com.sydmahadi .
 
       - name: Install Flutter dependencies
         run: flutter pub get
+
+      - name: Verify File Picker installation
+        run: |
+          flutter pub deps | grep -A 4 -B 2 file_picker
+          find "$HOME/.pub-cache/hosted/pub.dev" \
+            -path '*/file_picker-*/android/src/main/*' \
+            -type f -name '*Plugin*' -print
 
       - name: Create launcher icon configuration
         run: |
@@ -78,17 +85,16 @@ jobs:
 
       - name: Verify launcher icon
         run: |
-          if [ ! -f "icon.png" ]; then
-            echo "ERROR: icon.png was not found in project root."
+          test -f icon.png || {
+            echo "ERROR: icon.png missing from project root."
             exit 1
-          fi
-          ls -lh icon.png
+          }
 
       - name: Generate launcher icon
         run: |
           dart run flutter_launcher_icons -f flutter_launcher_icons.yaml
 
-      - name: Configure Android compileSdk 36
+      - name: Configure compileSdk 36 and desugaring
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -106,6 +112,7 @@ jobs:
           content = gradle.read_text(encoding="utf-8")
           is_kts = gradle.name.endswith(".kts")
 
+          # Set compileSdk.
           patterns = (
               [
                   (r"\bcompileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
@@ -129,31 +136,8 @@ jobs:
           else:
               raise SystemExit("ERROR: compileSdk setting not found.")
 
-          gradle.write_text(content, encoding="utf-8")
-          print("compileSdk configured:", gradle)
-          PY
-
-      - name: Enable core library desugaring
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          candidates = [
-              Path("android/app/build.gradle.kts"),
-              Path("android/app/build.gradle"),
-          ]
-          gradle = next((p for p in candidates if p.exists()), None)
-
-          if gradle is None:
-              raise SystemExit("ERROR: App Gradle file not found.")
-
-          content = gradle.read_text(encoding="utf-8")
-          is_kts = gradle.name.endswith(".kts")
-
-          # Enable desugaring in compileOptions.
+          # Enable core library desugaring.
           match = re.search(r"\bcompileOptions\s*\{", content)
-
           if not match:
               raise SystemExit("ERROR: compileOptions block not found.")
 
@@ -169,29 +153,26 @@ jobs:
               )
               pos = match.end()
               content = (
-                  content[:pos]
-                  + "\n        " + setting
-                  + content[pos:]
+                  content[:pos] + "\n        " + setting + content[pos:]
               )
 
-          # Find the top-level dependencies block, if present.
-          dep_match = re.search(
-              r"(?m)^dependencies\s*\{",
-              content
-          )
-
-          dependency = (
-              '    coreLibraryDesugaring('
-              '"com.android.tools:desugar_jdk_libs:2.1.4")'
-              if is_kts
-              else
-              "    coreLibraryDesugaring "
-              "'com.android.tools:desugar_jdk_libs:2.1.4'"
-          )
-
+          # Add the dependency to an existing top-level block,
+          # or create the block if the template has none.
           if "desugar_jdk_libs" not in content:
+              dep_match = re.search(
+                  r"(?m)^dependencies\s*\{", content
+              )
+
+              dependency = (
+                  '    coreLibraryDesugaring('
+                  '"com.android.tools:desugar_jdk_libs:2.1.4")'
+                  if is_kts
+                  else
+                  "    coreLibraryDesugaring "
+                  "'com.android.tools:desugar_jdk_libs:2.1.4'"
+              )
+
               if dep_match:
-                  # Find the matching closing brace.
                   opening = content.find("{", dep_match.start())
                   depth = 0
                   closing = None
@@ -207,7 +188,7 @@ jobs:
 
                   if closing is None:
                       raise SystemExit(
-                          "ERROR: dependencies block is not closed."
+                          "ERROR: dependencies block not closed."
                       )
 
                   content = (
@@ -216,7 +197,6 @@ jobs:
                       + content[closing:]
                   )
               else:
-                  # Modern Flutter templates may have no dependencies block.
                   content = (
                       content.rstrip()
                       + "\n\ndependencies {\n"
@@ -225,70 +205,72 @@ jobs:
                   )
 
           gradle.write_text(content, encoding="utf-8")
-          print("Desugaring configured in:", gradle)
+          print("compileSdk 36 and desugaring configured.")
           PY
 
-      - name: Patch gallery_saver_plus Android compileSdk
+      - name: Patch gallery_saver_plus compileSdk
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          pub_cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+          cache = Path.home() / ".pub-cache/hosted/pub.dev"
+          files = list(cache.glob(
+              "gallery_saver_plus-*/android/build.gradle"
+          ))
+          files += list(cache.glob(
+              "gallery_saver_plus-*/android/build.gradle.kts"
+          ))
 
-          files = list(
-              pub_cache.glob("gallery_saver_plus-*/android/build.gradle")
-          )
-          files += list(
-              pub_cache.glob("gallery_saver_plus-*/android/build.gradle.kts")
-          )
+          for gradle in files:
+              content = gradle.read_text(encoding="utf-8")
+              content = re.sub(
+                  r"\bcompileSdkVersion\s+\d+",
+                  "compileSdkVersion 36", content
+              )
+              content = re.sub(
+                  r"\bcompileSdk\s*=\s*\d+",
+                  "compileSdk = 36", content
+              )
+              content = re.sub(
+                  r"\bcompileSdk\s+\d+",
+                  "compileSdk 36", content
+              )
+              gradle.write_text(content, encoding="utf-8")
+              print("Patched:", gradle)
 
           if not files:
-              print("WARNING: gallery_saver_plus Gradle file not found.")
-          else:
-              for gradle in files:
-                  content = gradle.read_text(encoding="utf-8")
-                  content = re.sub(
-                      r"\bcompileSdkVersion\s+\d+",
-                      "compileSdkVersion 36",
-                      content
-                  )
-                  content = re.sub(
-                      r"\bcompileSdk\s*=\s*\d+",
-                      "compileSdk = 36",
-                      content
-                  )
-                  content = re.sub(
-                      r"\bcompileSdk\s+\d+",
-                      "compileSdk 36",
-                      content
-                  )
-                  gradle.write_text(content, encoding="utf-8")
-                  print("Patched:", gradle)
+              print("No gallery_saver_plus Gradle file found.")
           PY
 
       - name: Enable AndroidX
         run: |
           touch android/gradle.properties
 
-          if ! grep -q '^android.useAndroidX=' android/gradle.properties; then
-            echo 'android.useAndroidX=true' >> android/gradle.properties
-          fi
+          grep -q '^android.useAndroidX=' android/gradle.properties \
+            || echo 'android.useAndroidX=true' >> android/gradle.properties
 
-          if ! grep -q '^android.enableJetifier=' android/gradle.properties; then
-            echo 'android.enableJetifier=true' >> android/gradle.properties
-          fi
+          grep -q '^android.enableJetifier=' android/gradle.properties \
+            || echo 'android.enableJetifier=true' >> android/gradle.properties
+
+      - name: Regenerate Flutter plugin registration
+        run: |
+          flutter clean
+          flutter pub get
+
+          echo "Checking generated plugin registration..."
+          grep -n "FilePickerPlugin" \
+            android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java \
+            || true
 
       - name: Verify Android configuration
         run: |
           echo "APP NAME"
-          grep -n "android:label" android/app/src/main/AndroidManifest.xml || true
+          grep -n 'android:label' \
+            android/app/src/main/AndroidManifest.xml || true
 
-          echo "COMPILE SDK"
-          grep -n "compileSdk" android/app/build.gradle* || true
-
-          echo "DESUGARING CONFIGURATION"
-          grep -n -E "coreLibraryDesugaring|desugar_jdk_libs" \
+          echo "COMPILE SDK AND DESUGARING"
+          grep -n -E 'compileSdk|coreLibraryDesugaring|desugar_jdk_libs' \
             android/app/build.gradle* || true
 
           echo "ANDROIDX"
