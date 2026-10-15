@@ -31,6 +31,11 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Generate Android project
+        run: |
+          rm -rf android
+          flutter create --platforms=android --org com.sydmahadi .
+
       - name: Install Flutter dependencies
         run: flutter pub get
 
@@ -44,14 +49,6 @@ jobs:
             adaptive_icon_background: "#0F5132"
             adaptive_icon_foreground: "icon.png"
           EOF
-
-      - name: Generate Android project
-        run: |
-          rm -rf android
-          flutter create --platforms=android --org com.sydmahadi .
-
-      - name: Install dependencies after project generation
-        run: flutter pub get
 
       - name: Set Android app name
         run: |
@@ -77,13 +74,13 @@ jobs:
               raise SystemExit("ERROR: android:label not found.")
 
           manifest.write_text(updated, encoding="utf-8")
-          print("App name set successfully.")
+          print("App name set to: আমার হিসাব")
           PY
 
       - name: Verify launcher icon
         run: |
           if [ ! -f "icon.png" ]; then
-            echo "ERROR: icon.png not found in project root."
+            echo "ERROR: icon.png was not found in project root."
             exit 1
           fi
           ls -lh icon.png
@@ -109,8 +106,9 @@ jobs:
               raise SystemExit("ERROR: Android app Gradle file not found.")
 
           content = gradle.read_text(encoding="utf-8")
+          is_kts = gradle.name.endswith(".kts")
 
-          if gradle.name.endswith(".kts"):
+          if is_kts:
               patterns = [
                   (r"compileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
                   (r"compileSdk\s+[^\n]+", "compileSdk = 36"),
@@ -133,10 +131,80 @@ jobs:
               raise SystemExit("ERROR: compileSdk setting not found.")
 
           gradle.write_text(content, encoding="utf-8")
-          print("Updated:", gradle)
+          print("Updated compileSdk in:", gradle)
           PY
 
-      - name: Patch gallery_saver_plus compileSdk
+      - name: Enable core library desugaring
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          candidates = [
+              Path("android/app/build.gradle.kts"),
+              Path("android/app/build.gradle"),
+          ]
+
+          gradle = next((p for p in candidates if p.exists()), None)
+
+          if gradle is None:
+              raise SystemExit("ERROR: App Gradle file not found.")
+
+          content = gradle.read_text(encoding="utf-8")
+          is_kts = gradle.name.endswith(".kts")
+
+          compile_match = re.search(r"\bcompileOptions\s*\{", content)
+
+          if not compile_match:
+              raise SystemExit("ERROR: compileOptions block not found.")
+
+          if is_kts:
+              setting = "isCoreLibraryDesugaringEnabled = true"
+          else:
+              setting = "coreLibraryDesugaringEnabled true"
+
+          if not re.search(
+              r"\bisCoreLibraryDesugaringEnabled\b|"
+              r"\bcoreLibraryDesugaringEnabled\b",
+              content
+          ):
+              insert_at = compile_match.end()
+              content = (
+                  content[:insert_at]
+                  + "\n        " + setting
+                  + content[insert_at:]
+              )
+
+          dependencies_match = re.search(r"\bdependencies\s*\{", content)
+
+          if not dependencies_match:
+              raise SystemExit("ERROR: dependencies block not found.")
+
+          if "desugar_jdk_libs" not in content:
+              insert_at = dependencies_match.end()
+
+              if is_kts:
+                  dependency = (
+                      '\n    coreLibraryDesugaring('
+                      '"com.android.tools:desugar_jdk_libs:2.1.4")'
+                  )
+              else:
+                  dependency = (
+                      "\n    coreLibraryDesugaring "
+                      "'com.android.tools:desugar_jdk_libs:2.1.4'"
+                  )
+
+              content = (
+                  content[:insert_at]
+                  + dependency
+                  + content[insert_at:]
+              )
+
+          gradle.write_text(content, encoding="utf-8")
+          print("Core library desugaring configured in:", gradle)
+          PY
+
+      - name: Patch gallery_saver_plus Android compileSdk
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -153,28 +221,30 @@ jobs:
 
           if not files:
               print("WARNING: gallery_saver_plus Gradle file not found.")
+          else:
+              for gradle in files:
+                  content = gradle.read_text(encoding="utf-8")
 
-          for gradle in files:
-              content = gradle.read_text(encoding="utf-8")
+                  content = re.sub(
+                      r"compileSdkVersion\s+\d+",
+                      "compileSdkVersion 36",
+                      content
+                  )
 
-              content = re.sub(
-                  r"compileSdkVersion\s+\d+",
-                  "compileSdkVersion 36",
-                  content
-              )
-              content = re.sub(
-                  r"compileSdk\s*=\s*\d+",
-                  "compileSdk = 36",
-                  content
-              )
-              content = re.sub(
-                  r"compileSdk\s+\d+",
-                  "compileSdk 36",
-                  content
-              )
+                  content = re.sub(
+                      r"compileSdk\s*=\s*\d+",
+                      "compileSdk = 36",
+                      content
+                  )
 
-              gradle.write_text(content, encoding="utf-8")
-              print("Patched:", gradle)
+                  content = re.sub(
+                      r"compileSdk\s+\d+",
+                      "compileSdk 36",
+                      content
+                  )
+
+                  gradle.write_text(content, encoding="utf-8")
+                  print("Patched:", gradle)
           PY
 
       - name: Enable AndroidX
@@ -194,14 +264,20 @@ jobs:
           echo "APP NAME"
           grep -n "android:label" android/app/src/main/AndroidManifest.xml || true
 
-          echo "COMPILE SDK"
+          echo "APP COMPILE SDK"
           grep -n "compileSdk" android/app/build.gradle* || true
+
+          echo "CORE LIBRARY DESUGARING"
+          grep -n -E "coreLibraryDesugaring|desugar_jdk_libs" \
+            android/app/build.gradle* || true
+
+          echo "GALLERY SAVER PLUS COMPILE SDK"
+          grep -n "compileSdk" \
+            "$HOME"/.pub-cache/hosted/pub.dev/gallery_saver_plus-*/android/build.gradle* \
+            || true
 
           echo "ANDROID PROPERTIES"
           cat android/gradle.properties
-
-          echo "DEPENDENCIES"
-          flutter pub deps | grep -E 'flutter_launcher_icons|image |archive ' || true
 
       - name: Analyze Flutter project
         run: flutter analyze --no-fatal-infos
