@@ -1,3 +1,4 @@
+
 name: amar_hisab
 description: "আমার হিসাব - সহজে আপনার হিসাব রাখুন"
 publish_to: "none"
@@ -24,7 +25,7 @@ dependencies:
   printing: ^5.14.2
   screenshot: ^3.0.0
   path_provider: ^2.1.5
-  image: ^4.5.4
+  image: 4.10.0
   intl: ^0.20.2
 
   # Share and gallery
@@ -49,6 +50,7 @@ dev_dependencies:
     sdk: flutter
 
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
