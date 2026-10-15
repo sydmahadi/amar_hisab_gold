@@ -31,12 +31,8 @@ jobs:
           channel: stable
           cache: true
 
-      # ---------------------------------------------------------
-      # App name + launcher icon configuration
-      # ---------------------------------------------------------
       - name: Add launcher icon package
-        run: |
-          dart pub add --dev flutter_launcher_icons:^0.14.4
+        run: dart pub add --dev flutter_launcher_icons:^0.14.4
 
       - name: Create launcher icon configuration
         run: |
@@ -57,9 +53,6 @@ jobs:
           rm -rf android
           flutter create --platforms=android --org com.sydmahadi .
 
-      # ---------------------------------------------------------
-      # Set app name: আমার হিসাব
-      # ---------------------------------------------------------
       - name: Set Android app name
         run: |
           python3 - <<'PY'
@@ -67,14 +60,10 @@ jobs:
           import re
 
           manifest = Path("android/app/src/main/AndroidManifest.xml")
-
           if not manifest.exists():
-              raise SystemExit(
-                  "ERROR: AndroidManifest.xml not found."
-              )
+              raise SystemExit("ERROR: AndroidManifest.xml not found.")
 
-          content = manifest.read_text()
-
+          content = manifest.read_text(encoding="utf-8")
           updated, count = re.subn(
               r'android:label="[^"]*"',
               'android:label="আমার হিসাব"',
@@ -83,38 +72,24 @@ jobs:
           )
 
           if count == 0:
-              raise SystemExit(
-                  "ERROR: android:label not found."
-              )
+              raise SystemExit("ERROR: android:label not found.")
 
-          manifest.write_text(updated)
-
+          manifest.write_text(updated, encoding="utf-8")
           print("App name set to: আমার হিসাব")
-          print("Manifest:", manifest)
           PY
 
-      # ---------------------------------------------------------
-      # Generate launcher icon from Root/icon.png
-      # ---------------------------------------------------------
       - name: Verify icon.png
         run: |
           if [ ! -f "icon.png" ]; then
             echo "ERROR: icon.png was not found in project root."
-            echo "Expected location:"
-            echo "$(pwd)/icon.png"
             exit 1
           fi
-
-          echo "icon.png found:"
           ls -lh icon.png
 
       - name: Generate launcher icon
         run: |
           dart run flutter_launcher_icons -f flutter_launcher_icons.yaml
 
-      # ---------------------------------------------------------
-      # Configure Android compileSdk 36
-      # ---------------------------------------------------------
       - name: Configure Android compileSdk 36
         run: |
           python3 - <<'PY'
@@ -125,189 +100,71 @@ jobs:
               Path("android/app/build.gradle.kts"),
               Path("android/app/build.gradle"),
           ]
-
-          gradle = next(
-              (p for p in candidates if p.exists()),
-              None
-          )
+          gradle = next((p for p in candidates if p.exists()), None)
 
           if gradle is None:
-              raise SystemExit(
-                  "ERROR: Android app Gradle file not found."
-              )
+              raise SystemExit("ERROR: Android app Gradle file not found.")
 
-          content = gradle.read_text()
+          content = gradle.read_text(encoding="utf-8")
 
           if gradle.name.endswith(".kts"):
               patterns = [
-                  (
-                      r"compileSdk\s*=\s*[^\n]+",
-                      "compileSdk = 36"
-                  ),
-                  (
-                      r"compileSdk\s+[^\n]+",
-                      "compileSdk = 36"
-                  ),
+                  (r"compileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
+                  (r"compileSdk\s+[^\n]+", "compileSdk = 36"),
               ]
           else:
               patterns = [
-                  (
-                      r"compileSdkVersion\s+[^\n]+",
-                      "compileSdkVersion 36"
-                  ),
-                  (
-                      r"compileSdk\s*=\s*[^\n]+",
-                      "compileSdk = 36"
-                  ),
+                  (r"compileSdkVersion\s+[^\n]+", "compileSdkVersion 36"),
+                  (r"compileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
+                  (r"compileSdk\s+[^\n]+", "compileSdk 36"),
               ]
 
-          changed = False
-
           for pattern, replacement in patterns:
-              updated, count = re.subn(
-                  pattern,
-                  replacement,
-                  content,
-                  count=1
-              )
-
-              if count > 0:
+              updated, count = re.subn(pattern, replacement, content, count=1)
+              if count:
                   content = updated
-                  changed = True
                   break
+          else:
+              raise SystemExit("ERROR: compileSdk setting not found.")
 
-          if not changed:
-              raise SystemExit(
-                  "ERROR: Could not find compileSdk in "
-                  + str(gradle)
-              )
-
-          gradle.write_text(content)
-
+          gradle.write_text(content, encoding="utf-8")
           print("Updated:", gradle)
-
-          for line in content.splitlines():
-              if "compileSdk" in line:
-                  print(line)
           PY
 
-      # ---------------------------------------------------------
-      # Patch gallery_saver_plus Android compileSdk
-      # ---------------------------------------------------------
       - name: Patch gallery_saver_plus Android compileSdk
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          pub_cache = (
-              Path.home()
-              / ".pub-cache"
-              / "hosted"
-              / "pub.dev"
-          )
-
-          files = []
-
-          files.extend(
-              pub_cache.glob(
-                  "gallery_saver_plus-*/android/build.gradle"
-              )
-          )
-
-          files.extend(
-              pub_cache.glob(
-                  "gallery_saver_plus-*/android/build.gradle.kts"
-              )
-          )
+          pub_cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+          files = list(pub_cache.glob("gallery_saver_plus-*/android/build.gradle"))
+          files += list(pub_cache.glob("gallery_saver_plus-*/android/build.gradle.kts"))
 
           if not files:
-              raise SystemExit(
-                  "ERROR: gallery_saver_plus Gradle file not found."
-              )
-
-          for gradle in files:
-              content = gradle.read_text()
-
-              original = content
-
-              replacements = [
-                  (
-                      r"compileSdkVersion\s+31\b",
-                      "compileSdkVersion 36"
-                  ),
-                  (
-                      r"compileSdkVersion\s+32\b",
-                      "compileSdkVersion 36"
-                  ),
-                  (
-                      r"compileSdkVersion\s+33\b",
-                      "compileSdkVersion 36"
-                  ),
-                  (
-                      r"compileSdkVersion\s+34\b",
-                      "compileSdkVersion 36"
-                  ),
-                  (
-                      r"compileSdkVersion\s+35\b",
-                      "compileSdkVersion 36"
-                  ),
-                  (
-                      r"compileSdk\s*=\s*31\b",
-                      "compileSdk = 36"
-                  ),
-                  (
-                      r"compileSdk\s*=\s*32\b",
-                      "compileSdk = 36"
-                  ),
-                  (
-                      r"compileSdk\s*=\s*33\b",
-                      "compileSdk = 36"
-                  ),
-                  (
-                      r"compileSdk\s*=\s*34\b",
-                      "compileSdk = 36"
-                  ),
-                  (
-                      r"compileSdk\s*=\s*35\b",
-                      "compileSdk = 36"
-                  ),
-                  (
-                      r"compileSdk\s+31\b",
-                      "compileSdk 36"
-                  ),
-              ]
-
-              for pattern, replacement in replacements:
+              print("WARNING: gallery_saver_plus Gradle file not found.")
+          else:
+              for gradle in files:
+                  content = gradle.read_text(encoding="utf-8")
                   content = re.sub(
-                      pattern,
-                      replacement,
+                      r"compileSdkVersion\s+\d+",
+                      "compileSdkVersion 36",
                       content
                   )
-
-              if content == original:
-                  print(
-                      "WARNING: No compileSdk replacement "
-                      "was needed in:",
-                      gradle
+                  content = re.sub(
+                      r"compileSdk\s*=\s*\d+",
+                      "compileSdk = 36",
+                      content
                   )
-              else:
-                  gradle.write_text(content)
+                  content = re.sub(
+                      r"compileSdk\s+\d+",
+                      "compileSdk 36",
+                      content
+                  )
+                  gradle.write_text(content, encoding="utf-8")
                   print("Patched:", gradle)
-
-              print("Relevant Gradle lines:")
-
-              for line in content.splitlines():
-                  if (
-                      "compileSdk" in line
-                      or "compileSdkVersion" in line
-                  ):
-                      print(line)
           PY
 
-      # ---------------------------------------------------------
-      # Enable AndroidX
-      # ---------------------------------------------------------
       - name: Enable AndroidX
         run: |
           touch android/gradle.properties
@@ -320,53 +177,28 @@ jobs:
             echo 'android.enableJetifier=true' >> android/gradle.properties
           fi
 
-      # ---------------------------------------------------------
-      # Verify configuration
-      # ---------------------------------------------------------
       - name: Verify Android configuration
         run: |
-          echo "========================================"
           echo "APP NAME"
-          echo "========================================"
+          grep -n "android:label" android/app/src/main/AndroidManifest.xml || true
 
-          grep -n "android:label" \
-            android/app/src/main/AndroidManifest.xml || true
-
-          echo "========================================"
-          echo "APP GRADLE"
-          echo "========================================"
-
+          echo "APP COMPILE SDK"
           grep -n "compileSdk" android/app/build.gradle* || true
 
-          echo "========================================"
-          echo "GALLERY SAVER PLUS GRADLE"
-          echo "========================================"
-
+          echo "GALLERY SAVER PLUS COMPILE SDK"
           grep -n "compileSdk" \
             "$HOME"/.pub-cache/hosted/pub.dev/gallery_saver_plus-*/android/build.gradle* \
             || true
 
-          echo "========================================"
           echo "ANDROID PROPERTIES"
-          echo "========================================"
-
           cat android/gradle.properties
 
-      # ---------------------------------------------------------
-      # Analyze
-      # ---------------------------------------------------------
       - name: Analyze Flutter project
         run: flutter analyze --no-fatal-infos
 
-      # ---------------------------------------------------------
-      # Build APK
-      # ---------------------------------------------------------
       - name: Build release APK
         run: flutter build apk --release
 
-      # ---------------------------------------------------------
-      # Upload APK
-      # ---------------------------------------------------------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
