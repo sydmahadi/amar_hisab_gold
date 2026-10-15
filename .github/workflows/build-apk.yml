@@ -39,12 +39,9 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
-      - name: Verify File Picker installation
+      - name: Verify File Picker version
         run: |
-          flutter pub deps | grep -A 4 -B 2 file_picker
-          find "$HOME/.pub-cache/hosted/pub.dev" \
-            -path '*/file_picker-*/android/src/main/*' \
-            -type f -name '*Plugin*' -print
+          flutter pub deps | grep -A 3 -B 2 file_picker
 
       - name: Create launcher icon configuration
         run: |
@@ -80,21 +77,21 @@ jobs:
               raise SystemExit("ERROR: android:label not found.")
 
           manifest.write_text(updated, encoding="utf-8")
-          print("App name set to আমার হিসাব")
+          print("App name configured.")
           PY
 
       - name: Verify launcher icon
         run: |
-          test -f icon.png || {
+          if [ ! -f "icon.png" ]; then
             echo "ERROR: icon.png missing from project root."
             exit 1
-          }
+          fi
 
       - name: Generate launcher icon
         run: |
           dart run flutter_launcher_icons -f flutter_launcher_icons.yaml
 
-      - name: Configure compileSdk 36 and desugaring
+      - name: Configure Android SDK and desugaring
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -104,6 +101,7 @@ jobs:
               Path("android/app/build.gradle.kts"),
               Path("android/app/build.gradle"),
           ]
+
           gradle = next((p for p in candidates if p.exists()), None)
 
           if gradle is None:
@@ -112,7 +110,7 @@ jobs:
           content = gradle.read_text(encoding="utf-8")
           is_kts = gradle.name.endswith(".kts")
 
-          # Set compileSdk.
+          # Configure compileSdk 36.
           patterns = (
               [
                   (r"\bcompileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
@@ -138,6 +136,7 @@ jobs:
 
           # Enable core library desugaring.
           match = re.search(r"\bcompileOptions\s*\{", content)
+
           if not match:
               raise SystemExit("ERROR: compileOptions block not found.")
 
@@ -153,11 +152,12 @@ jobs:
               )
               pos = match.end()
               content = (
-                  content[:pos] + "\n        " + setting + content[pos:]
+                  content[:pos]
+                  + "\n        " + setting
+                  + content[pos:]
               )
 
-          # Add the dependency to an existing top-level block,
-          # or create the block if the template has none.
+          # Add desugaring dependency.
           if "desugar_jdk_libs" not in content:
               dep_match = re.search(
                   r"(?m)^dependencies\s*\{", content
@@ -205,7 +205,7 @@ jobs:
                   )
 
           gradle.write_text(content, encoding="utf-8")
-          print("compileSdk 36 and desugaring configured.")
+          print("compileSdk and desugaring configured.")
           PY
 
       - name: Patch gallery_saver_plus compileSdk
@@ -215,6 +215,7 @@ jobs:
           import re
 
           cache = Path.home() / ".pub-cache/hosted/pub.dev"
+
           files = list(cache.glob(
               "gallery_saver_plus-*/android/build.gradle"
           ))
@@ -224,18 +225,23 @@ jobs:
 
           for gradle in files:
               content = gradle.read_text(encoding="utf-8")
+
               content = re.sub(
                   r"\bcompileSdkVersion\s+\d+",
-                  "compileSdkVersion 36", content
+                  "compileSdkVersion 36",
+                  content
               )
               content = re.sub(
                   r"\bcompileSdk\s*=\s*\d+",
-                  "compileSdk = 36", content
+                  "compileSdk = 36",
+                  content
               )
               content = re.sub(
                   r"\bcompileSdk\s+\d+",
-                  "compileSdk 36", content
+                  "compileSdk 36",
+                  content
               )
+
               gradle.write_text(content, encoding="utf-8")
               print("Patched:", gradle)
 
@@ -258,23 +264,9 @@ jobs:
           flutter clean
           flutter pub get
 
-          echo "Checking generated plugin registration..."
+          echo "Generated File Picker registration:"
           grep -n "FilePickerPlugin" \
-            android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java \
-            || true
-
-      - name: Verify Android configuration
-        run: |
-          echo "APP NAME"
-          grep -n 'android:label' \
-            android/app/src/main/AndroidManifest.xml || true
-
-          echo "COMPILE SDK AND DESUGARING"
-          grep -n -E 'compileSdk|coreLibraryDesugaring|desugar_jdk_libs' \
-            android/app/build.gradle* || true
-
-          echo "ANDROIDX"
-          cat android/gradle.properties
+            android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
 
       - name: Analyze Flutter project
         run: flutter analyze --no-fatal-infos
