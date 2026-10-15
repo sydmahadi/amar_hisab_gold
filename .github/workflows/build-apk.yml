@@ -1,3 +1,4 @@
+
 name: Build Amar Hisab APK
 
 on:
@@ -31,8 +32,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Add launcher icon package
-        run: dart pub add --dev flutter_launcher_icons:^0.14.4
+      - name: Add compatible launcher icon dependencies
+        run: |
+          dart pub add --dev flutter_launcher_icons:^0.14.4 image:4.10.0
+          flutter pub get
 
       - name: Create launcher icon configuration
         run: |
@@ -45,13 +48,13 @@ jobs:
             adaptive_icon_foreground: "icon.png"
           EOF
 
-      - name: Install Flutter dependencies
-        run: flutter pub get
-
       - name: Generate Android project
         run: |
           rm -rf android
           flutter create --platforms=android --org com.sydmahadi .
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
 
       - name: Set Android app name
         run: |
@@ -120,7 +123,9 @@ jobs:
               ]
 
           for pattern, replacement in patterns:
-              updated, count = re.subn(pattern, replacement, content, count=1)
+              updated, count = re.subn(
+                  pattern, replacement, content, count=1
+              )
               if count:
                   content = updated
                   break
@@ -138,8 +143,12 @@ jobs:
           import re
 
           pub_cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
-          files = list(pub_cache.glob("gallery_saver_plus-*/android/build.gradle"))
-          files += list(pub_cache.glob("gallery_saver_plus-*/android/build.gradle.kts"))
+          files = list(
+              pub_cache.glob("gallery_saver_plus-*/android/build.gradle")
+          )
+          files += list(
+              pub_cache.glob("gallery_saver_plus-*/android/build.gradle.kts")
+          )
 
           if not files:
               print("WARNING: gallery_saver_plus Gradle file not found.")
@@ -192,6 +201,9 @@ jobs:
 
           echo "ANDROID PROPERTIES"
           cat android/gradle.properties
+
+          echo "IMAGE AND ARCHIVE DEPENDENCIES"
+          flutter pub deps | grep -E 'flutter_launcher_icons|image |archive '
 
       - name: Analyze Flutter project
         run: flutter analyze --no-fatal-infos
