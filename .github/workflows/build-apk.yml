@@ -62,7 +62,6 @@ jobs:
               raise SystemExit("ERROR: AndroidManifest.xml not found.")
 
           content = manifest.read_text(encoding="utf-8")
-
           updated, count = re.subn(
               r'android:label="[^"]*"',
               'android:label="আমার হিসাব"',
@@ -74,7 +73,7 @@ jobs:
               raise SystemExit("ERROR: android:label not found.")
 
           manifest.write_text(updated, encoding="utf-8")
-          print("App name set to: আমার হিসাব")
+          print("App name set to আমার হিসাব")
           PY
 
       - name: Verify launcher icon
@@ -99,26 +98,26 @@ jobs:
               Path("android/app/build.gradle.kts"),
               Path("android/app/build.gradle"),
           ]
-
           gradle = next((p for p in candidates if p.exists()), None)
 
           if gradle is None:
-              raise SystemExit("ERROR: Android app Gradle file not found.")
+              raise SystemExit("ERROR: App Gradle file not found.")
 
           content = gradle.read_text(encoding="utf-8")
           is_kts = gradle.name.endswith(".kts")
 
-          if is_kts:
-              patterns = [
-                  (r"compileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
-                  (r"compileSdk\s+[^\n]+", "compileSdk = 36"),
+          patterns = (
+              [
+                  (r"\bcompileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
+                  (r"\bcompileSdk\s+[^\n]+", "compileSdk = 36"),
               ]
-          else:
-              patterns = [
-                  (r"compileSdkVersion\s+[^\n]+", "compileSdkVersion 36"),
-                  (r"compileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
-                  (r"compileSdk\s+[^\n]+", "compileSdk 36"),
+              if is_kts
+              else [
+                  (r"\bcompileSdkVersion\s+[^\n]+", "compileSdkVersion 36"),
+                  (r"\bcompileSdk\s*=\s*[^\n]+", "compileSdk = 36"),
+                  (r"\bcompileSdk\s+[^\n]+", "compileSdk 36"),
               ]
+          )
 
           for pattern, replacement in patterns:
               updated, count = re.subn(
@@ -131,7 +130,7 @@ jobs:
               raise SystemExit("ERROR: compileSdk setting not found.")
 
           gradle.write_text(content, encoding="utf-8")
-          print("Updated compileSdk in:", gradle)
+          print("compileSdk configured:", gradle)
           PY
 
       - name: Enable core library desugaring
@@ -144,7 +143,6 @@ jobs:
               Path("android/app/build.gradle.kts"),
               Path("android/app/build.gradle"),
           ]
-
           gradle = next((p for p in candidates if p.exists()), None)
 
           if gradle is None:
@@ -153,55 +151,81 @@ jobs:
           content = gradle.read_text(encoding="utf-8")
           is_kts = gradle.name.endswith(".kts")
 
-          compile_match = re.search(r"\bcompileOptions\s*\{", content)
+          # Enable desugaring in compileOptions.
+          match = re.search(r"\bcompileOptions\s*\{", content)
 
-          if not compile_match:
+          if not match:
               raise SystemExit("ERROR: compileOptions block not found.")
-
-          if is_kts:
-              setting = "isCoreLibraryDesugaringEnabled = true"
-          else:
-              setting = "coreLibraryDesugaringEnabled true"
 
           if not re.search(
               r"\bisCoreLibraryDesugaringEnabled\b|"
               r"\bcoreLibraryDesugaringEnabled\b",
               content
           ):
-              insert_at = compile_match.end()
+              setting = (
+                  "isCoreLibraryDesugaringEnabled = true"
+                  if is_kts
+                  else "coreLibraryDesugaringEnabled true"
+              )
+              pos = match.end()
               content = (
-                  content[:insert_at]
+                  content[:pos]
                   + "\n        " + setting
-                  + content[insert_at:]
+                  + content[pos:]
               )
 
-          dependencies_match = re.search(r"\bdependencies\s*\{", content)
+          # Find the top-level dependencies block, if present.
+          dep_match = re.search(
+              r"(?m)^dependencies\s*\{",
+              content
+          )
 
-          if not dependencies_match:
-              raise SystemExit("ERROR: dependencies block not found.")
+          dependency = (
+              '    coreLibraryDesugaring('
+              '"com.android.tools:desugar_jdk_libs:2.1.4")'
+              if is_kts
+              else
+              "    coreLibraryDesugaring "
+              "'com.android.tools:desugar_jdk_libs:2.1.4'"
+          )
 
           if "desugar_jdk_libs" not in content:
-              insert_at = dependencies_match.end()
+              if dep_match:
+                  # Find the matching closing brace.
+                  opening = content.find("{", dep_match.start())
+                  depth = 0
+                  closing = None
 
-              if is_kts:
-                  dependency = (
-                      '\n    coreLibraryDesugaring('
-                      '"com.android.tools:desugar_jdk_libs:2.1.4")'
+                  for i in range(opening, len(content)):
+                      if content[i] == "{":
+                          depth += 1
+                      elif content[i] == "}":
+                          depth -= 1
+                          if depth == 0:
+                              closing = i
+                              break
+
+                  if closing is None:
+                      raise SystemExit(
+                          "ERROR: dependencies block is not closed."
+                      )
+
+                  content = (
+                      content[:closing]
+                      + "\n" + dependency + "\n"
+                      + content[closing:]
                   )
               else:
-                  dependency = (
-                      "\n    coreLibraryDesugaring "
-                      "'com.android.tools:desugar_jdk_libs:2.1.4'"
+                  # Modern Flutter templates may have no dependencies block.
+                  content = (
+                      content.rstrip()
+                      + "\n\ndependencies {\n"
+                      + dependency
+                      + "\n}\n"
                   )
 
-              content = (
-                  content[:insert_at]
-                  + dependency
-                  + content[insert_at:]
-              )
-
           gradle.write_text(content, encoding="utf-8")
-          print("Core library desugaring configured in:", gradle)
+          print("Desugaring configured in:", gradle)
           PY
 
       - name: Patch gallery_saver_plus Android compileSdk
@@ -224,25 +248,21 @@ jobs:
           else:
               for gradle in files:
                   content = gradle.read_text(encoding="utf-8")
-
                   content = re.sub(
-                      r"compileSdkVersion\s+\d+",
+                      r"\bcompileSdkVersion\s+\d+",
                       "compileSdkVersion 36",
                       content
                   )
-
                   content = re.sub(
-                      r"compileSdk\s*=\s*\d+",
+                      r"\bcompileSdk\s*=\s*\d+",
                       "compileSdk = 36",
                       content
                   )
-
                   content = re.sub(
-                      r"compileSdk\s+\d+",
+                      r"\bcompileSdk\s+\d+",
                       "compileSdk 36",
                       content
                   )
-
                   gradle.write_text(content, encoding="utf-8")
                   print("Patched:", gradle)
           PY
@@ -264,19 +284,14 @@ jobs:
           echo "APP NAME"
           grep -n "android:label" android/app/src/main/AndroidManifest.xml || true
 
-          echo "APP COMPILE SDK"
+          echo "COMPILE SDK"
           grep -n "compileSdk" android/app/build.gradle* || true
 
-          echo "CORE LIBRARY DESUGARING"
+          echo "DESUGARING CONFIGURATION"
           grep -n -E "coreLibraryDesugaring|desugar_jdk_libs" \
             android/app/build.gradle* || true
 
-          echo "GALLERY SAVER PLUS COMPILE SDK"
-          grep -n "compileSdk" \
-            "$HOME"/.pub-cache/hosted/pub.dev/gallery_saver_plus-*/android/build.gradle* \
-            || true
-
-          echo "ANDROID PROPERTIES"
+          echo "ANDROIDX"
           cat android/gradle.properties
 
       - name: Analyze Flutter project
