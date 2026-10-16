@@ -19,6 +19,7 @@ Future<void> main() async {
   // Initialize notifications and request permission.
   await NotificationService.instance.init();
   await NotificationService.instance.requestPermission();
+  await NotificationService.instance.syncFinancialReminders();
 
   runApp(const AmarHisabApp());
 }
