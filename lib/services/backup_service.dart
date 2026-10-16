@@ -66,17 +66,37 @@ class BackupService {
     return prefs.getBool(_backupFolderKey) ?? false;
   }
 
-  Future<String> createBackupJson() async {
-    final settings = await SharedPreferences.getInstance();
+  Future<Map<String, dynamic>> _readSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final settings = <String, dynamic>{};
 
-    final backupData = await MoneyDb.instance.exportBackup(
+    for (final key in prefs.getKeys()) {
+      final value = prefs.get(key);
+
+      if (value is String ||
+          value is bool ||
+          value is int ||
+          value is double ||
+          value is List<String>) {
+        settings[key] = value;
+      }
+    }
+
+    return settings;
+  }
+
+  Future<String> createBackupJson() async {
+    final settings = await _readSettings();
+
+    final backupJson = await MoneyDb.instance.exportBackup(
       settings: settings,
     );
 
-    final decoded = jsonDecode(backupData);
+    final decoded = jsonDecode(backupJson);
 
     if (decoded is! Map<String, dynamic> ||
         decoded['app'] != 'AmarHisab' ||
+        decoded['format_version'] != 1 ||
         decoded['tables'] is! Map) {
       throw Exception('ব্যাকআপ ডেটার ফরম্যাট সঠিক নয়।');
     }
@@ -89,7 +109,7 @@ class BackupService {
       throw Exception('আগে ব্যাকআপ ফোল্ডার নির্বাচন করুন।');
     }
 
-    final json = await createBackupJson();
+    final backupJson = await createBackupJson();
     final now = DateTime.now();
 
     final timestamp =
@@ -106,7 +126,7 @@ class BackupService {
       'saveBackupToFolder',
       <String, dynamic>{
         'filename': filename,
-        'content': json,
+        'content': backupJson,
       },
     );
 
@@ -124,8 +144,7 @@ class BackupService {
   }
 
   Future<String?> exportBackupFile() async {
-    final json = await createBackupJson();
-
+    final backupJson = await createBackupJson();
     final now = DateTime.now();
 
     final timestamp =
@@ -143,7 +162,7 @@ class BackupService {
       fileName: filename,
       type: FileType.custom,
       allowedExtensions: ['json'],
-      bytes: utf8.encode(json),
+      bytes: utf8.encode(backupJson),
     );
 
     if (path == null || path.isEmpty) {
@@ -173,19 +192,48 @@ class BackupService {
     }
 
     final file = result.files.single;
-    final bytes = file.bytes ?? await file.readAsBytes();
-    final jsonString = utf8.decode(bytes);
+    final bytes = file.bytes;
 
-    final decoded = jsonDecode(jsonString);
+    if (bytes == null || bytes.isEmpty) {
+      throw Exception('ব্যাকআপ ফাইল থেকে ডেটা পড়া যায়নি।');
+    }
+
+    final backupJson = utf8.decode(bytes);
+    final decoded = jsonDecode(backupJson);
 
     if (decoded is! Map<String, dynamic> ||
         decoded['app'] != 'AmarHisab' ||
+        decoded['format_version'] != 1 ||
         decoded['tables'] is! Map) {
-      throw Exception('নির্বাচিত ফাইলটি সঠিক আমার হিসাব ব্যাকআপ নয়।');
+      throw Exception('সঠিক আমার হিসাব ব্যাকআপ ফাইল নির্বাচন করুন।');
     }
 
     final restoredSettings =
-        await MoneyDb.instance.restoreBackup(jsonString);
+        await MoneyDb.instance.restoreBackup(backupJson);
+
+    final prefs = await SharedPreferences.getInstance();
+
+    for (final entry in restoredSettings.entries) {
+      final key = entry.key;
+      final value = entry.value;
+
+      if (value is String) {
+        await prefs.setString(key, value);
+      } else if (value is bool) {
+        await prefs.setBool(key, value);
+      } else if (value is int) {
+        await prefs.setInt(key, value);
+      } else if (value is double) {
+        await prefs.setDouble(key, value);
+      } else if (value is List<String>) {
+        await prefs.setStringList(key, value);
+      }
+    }
+
+    await prefs.setString(
+      _lastBackupDateKey,
+      DateTime.now().toIso8601String(),
+    );
 
     return restoredSettings;
   }
