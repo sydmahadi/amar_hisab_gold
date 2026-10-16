@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 
 import '../services/app_settings.dart';
@@ -44,6 +45,10 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _transactions = [];
   List<Map<String, dynamic>> _categories = [];
 
+  // Upcoming reminder data
+  List<Map<String, dynamic>> _reminderLoans = [];
+  List<Map<String, dynamic>> _reminderDps = [];
+
   @override
   void initState() {
     super.initState();
@@ -69,6 +74,20 @@ class _HomeScreenState extends State<HomeScreen> {
       final totalBalance = await _db.getTotalBalance();
       final loanTotals = await _db.getLoanTotals();
       final categories = await _db.getCategories();
+
+      List<Map<String, dynamic>> reminderLoans = [];
+      List<Map<String, dynamic>> reminderDps = [];
+
+      try {
+        reminderLoans = await _db.getLoansDueForReminder(
+          daysAhead: 7,
+        );
+        reminderDps = await _db.getDpsDueForReminder(
+          daysAhead: 7,
+        );
+      } catch (_) {
+        // Dashboard will continue working if reminders fail to load.
+      }
 
       double totalIncome = 0;
       double totalExpense = 0;
@@ -135,6 +154,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _accounts = accounts;
         _transactions = transactions.take(5).toList();
         _categories = recentCategories;
+        _reminderLoans = reminderLoans;
+        _reminderDps = reminderDps;
         _loading = false;
       });
     } catch (_) {
@@ -541,21 +562,15 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                  ),
-                ),
+                Text(title, style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                )),
                 const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontSize: 12,
-                  ),
-                ),
+                Text(subtitle, style: TextStyle(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                )),
               ],
             ),
           ),
@@ -583,9 +598,7 @@ class _HomeScreenState extends State<HomeScreen> {
               : theme.colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: selected
-                ? AppTheme.gold
-                : AppTheme.gold.withValues(alpha: .18),
+            color: selected ? AppTheme.gold : AppTheme.gold.withValues(alpha: .18),
           ),
         ),
         child: Text(
@@ -629,6 +642,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         SliverToBoxAdapter(child: _buildHeader()),
                         SliverToBoxAdapter(child: _buildBalanceCard()),
                         SliverToBoxAdapter(child: _buildLoanSection()),
+                        SliverToBoxAdapter(
+                          child: _buildUpcomingRemindersSection(),
+                        ),
                         SliverToBoxAdapter(child: _buildQuickActions()),
                         SliverToBoxAdapter(child: _buildAccountSection()),
                         SliverToBoxAdapter(child: _buildRecentSection()),
@@ -649,9 +665,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildFloatingAddButton() {
-    final label = _settings.isBangla
-        ? 'লেনদেন যোগ'
-        : 'Add transaction';
+    final label = _settings.isBangla ? 'লেনদেন যোগ' : 'Add transaction';
 
     return Material(
       color: Colors.transparent,
@@ -692,21 +706,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     color: AppTheme.goldLight.withValues(alpha: .55),
                   ),
                 ),
-                child: const Icon(
-                  Icons.add_rounded,
-                  color: AppTheme.goldLight,
-                  size: 23,
-                ),
+                child: const Icon(Icons.add_rounded,
+                    color: AppTheme.goldLight, size: 23),
               ),
               const SizedBox(width: 9),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
+              Text(label, style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+              )),
             ],
           ),
         ),
@@ -715,15 +723,54 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildHeader() {
+    final reminderCount = _reminderLoans.length + _reminderDps.length;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
       child: Row(
         children: [
           _roundButton(icon: Icons.menu_rounded, onTap: _openDrawer),
           const Spacer(),
-          _roundButton(
-            icon: Icons.refresh_rounded,
-            onTap: _loadDashboard,
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              _roundButton(
+                icon: Icons.notifications_active_rounded,
+                onTap: () => _openScreen(const NotificationScreen()),
+              ),
+              if (reminderCount > 0)
+                Positioned(
+                  right: -4,
+                  top: -4,
+                  child: Container(
+                    constraints: const BoxConstraints(
+                      minWidth: 21,
+                      minHeight: 21,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Text(
+                      reminderCount > 99 ? '99+' : '$reminderCount',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ],
       ),
@@ -827,31 +874,22 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Row(
                 children: [
-                  const Icon(
-                    Icons.account_balance_wallet_rounded,
-                    color: AppTheme.goldLight,
-                    size: 21,
-                  ),
+                  const Icon(Icons.account_balance_wallet_rounded,
+                      color: AppTheme.goldLight, size: 21),
                   const SizedBox(width: 8),
-                  Text(
-                    _settings.t('balance'),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
-                    ),
-                  ),
+                  Text(_settings.t('balance'), style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  )),
                 ],
               ),
               const SizedBox(height: 9),
-              Text(
-                _money(_accountBalance),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 31,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
+              Text(_money(_accountBalance), style: const TextStyle(
+                color: Colors.white,
+                fontSize: 31,
+                fontWeight: FontWeight.w900,
+              )),
               const SizedBox(height: 4),
               Text(
                 _settings.isBangla
@@ -917,14 +955,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const Spacer(),
-                    Text(
-                      _money(_difference.abs()),
-                      style: const TextStyle(
-                        color: AppTheme.goldLight,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
+                    Text(_money(_difference.abs()), style: const TextStyle(
+                      color: AppTheme.goldLight,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    )),
                   ],
                 ),
               ),
@@ -945,9 +980,7 @@ class _HomeScreenState extends State<HomeScreen> {
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: .08),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: .10),
-        ),
+        border: Border.all(color: Colors.white.withValues(alpha: .10)),
       ),
       child: Row(
         children: [
@@ -957,24 +990,19 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: .65),
-                    fontSize: 10,
-                  ),
-                ),
+                Text(title, style: TextStyle(
+                  color: Colors.white.withValues(alpha: .65),
+                  fontSize: 10,
+                )),
                 const SizedBox(height: 3),
-                Text(
-                  _money(amount),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
+                Text(_money(amount),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    )),
               ],
             ),
           ),
@@ -1102,6 +1130,238 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildUpcomingRemindersSection() {
+    final theme = Theme.of(context);
+    final isBn = _settings.isBangla;
+    final reminderCount = _reminderLoans.length + _reminderDps.length;
+
+    String dateText(dynamic value) {
+      if (value == null || value.toString().isEmpty) {
+        return isBn ? 'তারিখ নেই' : 'No date';
+      }
+
+      final date = DateTime.tryParse(value.toString());
+      if (date == null) return value.toString();
+
+      return '${date.day.toString().padLeft(2, '0')}/'
+          '${date.month.toString().padLeft(2, '0')}/'
+          '${date.year}';
+    }
+
+    Widget reminderTile({
+      required IconData icon,
+      required Color color,
+      required String title,
+      required String subtitle,
+      required String date,
+      required String amount,
+    }) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest
+              .withValues(alpha: .35),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withValues(alpha: .20)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Icon(icon, color: color, size: 21),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurface,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 11,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '${isBn ? 'তারিখ' : 'Date'}: $date',
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              amount,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionTitle(
+            title: isBn ? 'আসন্ন রিমাইন্ডার' : 'Upcoming Reminders',
+            icon: Icons.notifications_active_rounded,
+            onTap: () => _openScreen(const NotificationScreen()),
+          ),
+          const SizedBox(height: 10),
+          if (reminderCount == 0)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: theme.cardColor,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: AppTheme.gold.withValues(alpha: .20),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.notifications_none_rounded,
+                    color: AppTheme.gold,
+                    size: 30,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      isBn
+                          ? 'আগামী ৭ দিনের কোনো রিমাইন্ডার পাওয়া যায়নি।'
+                          : 'No reminders found for the next 7 days.',
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.cardColor,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(
+                  color: AppTheme.gold.withValues(alpha: .20),
+                ),
+              ),
+              child: Column(
+                children: [
+                  ..._reminderLoans.take(4).map((loan) {
+                    final name = (loan['person_name'] ??
+                            loan['name'] ??
+                            loan['person'] ??
+                            (isBn ? 'দেনা-পাওনা' : 'Loan'))
+                        .toString();
+
+                    final dueDate = loan['due_date'] ??
+                        loan['next_due_date'] ??
+                        loan['reminder_date'];
+
+                    final amount = _toDouble(
+                      loan['remaining_amount'] ??
+                          loan['due_amount'] ??
+                          loan['amount'] ??
+                          loan['remaining'],
+                    );
+
+                    return reminderTile(
+                      icon: Icons.handshake_rounded,
+                      color: AppTheme.incomeColor,
+                      title: name,
+                      subtitle: isBn
+                          ? 'দেনা-পাওনার রিমাইন্ডার'
+                          : 'Loan reminder',
+                      date: dateText(dueDate),
+                      amount: _money(amount),
+                    );
+                  }),
+                  ..._reminderDps.take(4).map((dps) {
+                    final name = (dps['name'] ??
+                            dps['title'] ??
+                            dps['scheme_name'] ??
+                            (isBn ? 'DPS সঞ্চয়' : 'DPS savings'))
+                        .toString();
+
+                    final dueDate = dps['due_date'] ??
+                        dps['next_due_date'] ??
+                        dps['next_installment_date'] ??
+                        dps['reminder_date'];
+
+                    final amount = _toDouble(
+                      dps['installment_amount'] ??
+                          dps['due_amount'] ??
+                          dps['amount'] ??
+                          dps['monthly_amount'],
+                    );
+
+                    return reminderTile(
+                      icon: Icons.savings_rounded,
+                      color: AppTheme.gold,
+                      title: name,
+                      subtitle: isBn
+                          ? 'সঞ্চয় / DPS কিস্তি'
+                          : 'Savings / DPS installment',
+                      date: dateText(dueDate),
+                      amount: _money(amount),
+                    );
+                  }),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () =>
+                          _openScreen(const NotificationScreen()),
+                      icon: const Icon(Icons.notifications_active_rounded),
+                      label: Text(
+                        isBn ? 'সব রিমাইন্ডার দেখুন' : 'View all reminders',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1344,9 +1604,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: AppTheme.gold.withValues(alpha: .10),
                         ),
                       ListTile(
-                        onTap: () {
-                          _openScreen(const TransactionsScreen());
-                        },
+                        onTap: () =>
+                            _openScreen(const TransactionsScreen()),
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12,
                           vertical: 5,
@@ -1497,9 +1756,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: AppTheme.gold.withValues(alpha: .12),
                         ),
                       ListTile(
-                        onTap: () {
-                          _openScreen(const CategoriesScreen());
-                        },
+                        onTap: () =>
+                            _openScreen(const CategoriesScreen()),
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 15,
                           vertical: 3,
@@ -1587,13 +1845,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 title: _settings.isBangla ? 'বাজেট' : 'Budget',
                 onTap: () => _openScreen(const BudgetScreen()),
               ),
-              
               _toolCard(
                 icon: Icons.notifications_active_rounded,
                 title: _settings.isBangla ? 'রিমাইন্ডার' : 'Reminder',
                 onTap: () => _openScreen(const NotificationScreen()),
               ),
-
               _toolCard(
                 icon: Icons.receipt_long_rounded,
                 title: _settings.t('transactions'),
@@ -1803,74 +2059,48 @@ class _HomeScreenState extends State<HomeScreen> {
                   _drawerItem(
                     icon: Icons.receipt_long_rounded,
                     title: _settings.t('transactions'),
-                    onTap: () {
-                      _openScreen(const TransactionsScreen());
-                    },
+                    onTap: () => _openScreen(const TransactionsScreen()),
                   ),
                   _drawerItem(
                     icon: Icons.account_balance_wallet_rounded,
                     title: _settings.t('accounts'),
-                    onTap: () {
-                      _openScreen(const AccountsScreen());
-                    },
+                    onTap: () => _openScreen(const AccountsScreen()),
                   ),
                   _drawerItem(
                     icon: Icons.category_rounded,
                     title: _settings.t('categories'),
-                    onTap: () {
-                      _openScreen(const CategoriesScreen());
-                    },
+                    onTap: () => _openScreen(const CategoriesScreen()),
                   ),
                   _drawerItem(
                     icon: Icons.bar_chart_rounded,
                     title: _settings.t('statistics'),
-                    onTap: () {
-                      _openScreen(const StatisticsScreen());
-                    },
+                    onTap: () => _openScreen(const StatisticsScreen()),
                   ),
                   _drawerItem(
                     icon: Icons.assessment_rounded,
                     title: _settings.t('report'),
-                    onTap: () {
-                      _openScreen(const ReportScreen());
-                    },
+                    onTap: () => _openScreen(const ReportScreen()),
                   ),
-
-                  // দেনা-পাওনা / Loans
                   _drawerItem(
                     icon: Icons.handshake_rounded,
-                    title: _settings.isBangla
-                        ? 'দেনা-পাওনা'
-                        : 'Loans',
-                    onTap: () {
-                      _openScreen(const LoanScreen());
-                    },
+                    title: _settings.isBangla ? 'দেনা-পাওনা' : 'Loans',
+                    onTap: () => _openScreen(const LoanScreen()),
                   ),
-
-                  // সঞ্চয় / Savings — Loans-এর ঠিক নিচে
                   _drawerItem(
                     icon: Icons.savings_rounded,
                     title: _settings.isBangla ? 'সঞ্চয়' : 'Savings',
-                    onTap: () {
-                      _openScreen(const SavingsScreen());
-                    },
+                    onTap: () => _openScreen(const SavingsScreen()),
                   ),
                   _drawerItem(
                     icon: Icons.pie_chart_rounded,
                     title: _settings.isBangla ? 'বাজেট' : 'Budget',
-                    onTap: () {
-                      _openScreen(const BudgetScreen());
-                    },
+                    onTap: () => _openScreen(const BudgetScreen()),
                   ),
-                  
                   _drawerItem(
                     icon: Icons.notifications_active_rounded,
                     title: _settings.isBangla ? 'রিমাইন্ডার' : 'Reminder',
-                    onTap: () {
-                      _openScreen(const NotificationScreen());
-                    },
+                    onTap: () => _openScreen(const NotificationScreen()),
                   ),
-
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
@@ -1882,7 +2112,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ),
-
                   Container(
                     margin: const EdgeInsets.symmetric(
                       horizontal: 3,
@@ -1932,8 +2161,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ? _settings.t('darkTheme')
                                     : _settings.t('lightTheme'),
                                 style: TextStyle(
-                                  color:
-                                      theme.colorScheme.onSurfaceVariant,
+                                  color: theme.colorScheme.onSurfaceVariant,
                                   fontSize: 10,
                                 ),
                               ),
@@ -1947,7 +2175,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ),
                   ),
-
                   Container(
                     margin: const EdgeInsets.symmetric(
                       horizontal: 3,
@@ -2001,7 +2228,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 5),
                   _drawerItem(
                     icon: Icons.settings_rounded,
@@ -2011,9 +2237,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _drawerItem(
                     icon: Icons.info_outline_rounded,
                     title: _settings.t('about'),
-                    onTap: () {
-                      _openScreen(const AboutScreen());
-                    },
+                    onTap: () => _openScreen(const AboutScreen()),
                   ),
                 ],
               ),
