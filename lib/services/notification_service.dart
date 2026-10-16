@@ -22,7 +22,7 @@ class NotificationService {
       AndroidNotificationChannel(
     _channelId,
     'Amar Hisab Reminders',
-    description: 'Loan, budget and savings reminders',
+    description: 'Loan and DPS reminders',
     importance: Importance.max,
   );
 
@@ -58,7 +58,7 @@ class NotificationService {
     const android = AndroidNotificationDetails(
       _channelId,
       'Amar Hisab Reminders',
-      channelDescription: 'Loan, budget and savings reminders',
+      channelDescription: 'Loan and DPS reminders',
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
@@ -84,7 +84,9 @@ class NotificationService {
   }) async {
     await init();
 
-    if (!scheduledDate.isAfter(DateTime.now())) return;
+    if (!scheduledDate.isAfter(DateTime.now())) {
+      throw ArgumentError('scheduledDate must be in the future.');
+    }
 
     await _plugin.zonedSchedule(
       id,
@@ -97,7 +99,43 @@ class NotificationService {
     );
   }
 
-  /// ডেটাবেসের ঋণ, DPS ও বাজেট থেকে রিমাইন্ডার তৈরি করে।
+  DateTime? _parseDate(Object? value) {
+    if (value == null) return null;
+    return DateTime.tryParse(value.toString());
+  }
+
+  DateTime _nextReminderTime(Object? dueValue) {
+    final dueDate = _parseDate(dueValue);
+    final now = DateTime.now();
+
+    // কোনো তারিখ না থাকলে আগামীকাল সকাল ৯টা।
+    if (dueDate == null) {
+      return DateTime(now.year, now.month, now.day + 1, 9);
+    }
+
+    final dueDay = DateTime(dueDate.year, dueDate.month, dueDate.day);
+    final today = DateTime(now.year, now.month, now.day);
+    final todayNine = DateTime(now.year, now.month, now.day, 9);
+
+    // বকেয়া তারিখ পার হয়ে গেলে পরবর্তী রিমাইন্ডার আগামীকাল সকাল ৯টায়।
+    if (dueDay.isBefore(today)) {
+      return DateTime(now.year, now.month, now.day + 1, 9);
+    }
+
+    // আজকের সকাল ৯টা পার হয়ে গেলে আগামীকাল সকাল ৯টা।
+    if (dueDay.isAtSameMomentAs(today) && !todayNine.isAfter(now)) {
+      return DateTime(now.year, now.month, now.day + 1, 9);
+    }
+
+    // ভবিষ্যতের তারিখ অথবা আজ সকাল ৯টার আগের সময়।
+    return DateTime(dueDate.year, dueDate.month, dueDate.day, 9);
+  }
+
+  String _dateText(DateTime date) {
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/${date.year}';
+  }
+
   Future<int> syncFinancialReminders() async {
     await init();
 
@@ -105,125 +143,97 @@ class NotificationService {
     _syncing = true;
 
     try {
-      // পুরোনো শিডিউল সরিয়ে বর্তমান ডেটা অনুযায়ী নতুন করে তৈরি।
+      // আগের আর্থিক রিমাইন্ডারগুলো সরিয়ে বর্তমান ডেটা দিয়ে তৈরি করা।
+      // দ্রষ্টব্য: এটি টেস্ট রিমাইন্ডারসহ অন্য scheduled notification-ও বাতিল করে।
       await _plugin.cancelAll();
 
-      var scheduledCount = 0;
-      final now = DateTime.now();
+      var count = 0;
 
-      Future<bool> scheduleIfFuture({
-        required int id,
-        required String title,
-        required String body,
-        required DateTime date,
-      }) async {
-        final reminderDate = DateTime(
-          date.year,
-          date.month,
-          date.day,
-          9,
-        );
-
-        if (!reminderDate.isAfter(DateTime.now())) return false;
-
-        await scheduleNotification(
-          id: id,
-          title: title,
-          body: body,
-          scheduledDate: reminderDate,
-        );
-        return true;
-      }
-
-      // 1. সক্রিয় ঋণের শেষ তারিখ
-      final loans = await MoneyDb.instance.getLoans(activeOnly: true);
+      final loans = await MoneyDb.instance.getLoansDueForReminder(
+        daysAhead: 7,
+      );
 
       for (final loan in loans) {
-        final dueText = loan['due_date']?.toString();
-        if (dueText == null || dueText.isEmpty) continue;
+        final idValue = loan['id'];
+        if (idValue is! num) continue;
 
-        final dueDate = DateTime.tryParse(dueText);
+        final dueDate = _parseDate(loan['due_date']);
         if (dueDate == null) continue;
 
-        final loanId = (loan['id'] as num).toInt();
-        final person = loan['person_name']?.toString() ?? '';
-        final remaining =
-            (loan['remaining'] as num?)?.toDouble() ?? 0;
+        final remainingValue = loan['remaining'];
+        final remaining = remainingValue is num
+            ? remainingValue.toDouble()
+            : double.tryParse(remainingValue?.toString() ?? '') ?? 0;
 
         if (remaining <= 0) continue;
 
-        final title = 'আমার হিসাব — ঋণের তারিখ';
-        final body =
-            '$person: ঋণ পরিশোধ/আদায়ের শেষ তারিখ ${dueDate.day}/${dueDate.month}/${dueDate.year}';
+        final person = loan['person_name']?.toString() ?? '';
+        final type = loan['type']?.toString() ?? '';
+        final receivable = type == 'receivable';
+        final dueDay = DateTime(
+          dueDate.year,
+          dueDate.month,
+          dueDate.day,
+        );
+        final today = DateTime.now();
+        final todayDay = DateTime(today.year, today.month, today.day);
+        final overdue = dueDay.isBefore(todayDay);
 
-        // প্রতিটি ঋণের জন্য একটি নির্দিষ্ট Notification ID।
-        if (await scheduleIfFuture(
-          id: 100000 + loanId,
-          title: title,
-          body: body,
-          date: dueDate,
-        )) {
-          scheduledCount++;
-        }
-      }
+        final title = overdue
+            ? 'আমার হিসাব — মেয়াদোত্তীর্ণ বকেয়া'
+            : 'আমার হিসাব — দেনা-পাওনা রিমাইন্ডার';
 
-      // 2. DPS-এর পরবর্তী কিস্তির তারিখ
-      final savings = await MoneyDb.instance.getSavings();
-
-      for (final saving in savings) {
-        final isDps = (saving['is_dps'] as num?)?.toInt() == 1;
-        if (!isDps) continue;
-
-        final dueText = saving['next_due_date']?.toString();
-        if (dueText == null || dueText.isEmpty) continue;
-
-        final dueDate = DateTime.tryParse(dueText);
-        if (dueDate == null) continue;
-
-        final savingId = (saving['id'] as num).toInt();
-        final name = saving['name']?.toString() ?? 'DPS';
-        final installment =
-            (saving['installment_amount'] as num?)?.toDouble() ?? 0;
-
-        final title = 'আমার হিসাব — DPS কিস্তি';
-        final body =
-            '$name: কিস্তি ৳${installment.toStringAsFixed(2)}। তারিখ ${dueDate.day}/${dueDate.month}/${dueDate.year}';
-
-        if (await scheduleIfFuture(
-          id: 200000 + savingId,
-          title: title,
-          body: body,
-          date: dueDate,
-        )) {
-          scheduledCount++;
-        }
-      }
-
-      // 3. বাজেট পর্যালোচনার মাসিক রিমাইন্ডার
-      final currentBudgets =
-          await MoneyDb.instance.getBudgets(month: now);
-
-      final nextMonth = DateTime(now.year, now.month + 1, 1);
-      final nextBudgets =
-          await MoneyDb.instance.getBudgets(month: nextMonth);
-
-      if (currentBudgets.isNotEmpty || nextBudgets.isNotEmpty) {
-        var reminderDate = DateTime(now.year, now.month + 1, 0, 20);
-
-        if (!reminderDate.isAfter(now)) {
-          reminderDate = DateTime(now.year, now.month + 2, 0, 20);
-        }
+        final body = overdue
+            ? '$person: ${receivable ? 'পাওনা' : 'দেনা'} ${remaining.toStringAsFixed(2)} টাকা এখনো বাকি।'
+            : '$person: ${receivable ? 'পাওনা আদায়' : 'দেনা পরিশোধ'}-এর তারিখ ${_dateText(dueDate)}।';
 
         await scheduleNotification(
-          id: 900001,
-          title: 'আমার হিসাব — বাজেট রিমাইন্ডার',
-          body: 'আপনার মাসিক বাজেট ও খরচ পর্যালোচনা করুন।',
-          scheduledDate: reminderDate,
+          id: 100000 + idValue.toInt(),
+          title: title,
+          body: body,
+          scheduledDate: _nextReminderTime(dueDate),
         );
-        scheduledCount++;
+        count++;
       }
 
-      return scheduledCount;
+      final savings = await MoneyDb.instance.getDpsDueForReminder(
+        daysAhead: 7,
+      );
+
+      for (final saving in savings) {
+        final idValue = saving['id'];
+        if (idValue is! num) continue;
+
+        final dueDate = _parseDate(saving['next_due_date']);
+        if (dueDate == null) continue;
+
+        final installmentValue = saving['installment_amount'];
+        final installment = installmentValue is num
+            ? installmentValue.toDouble()
+            : double.tryParse(installmentValue?.toString() ?? '') ?? 0;
+
+        if (installment <= 0) continue;
+
+        final name = saving['name']?.toString() ?? 'DPS';
+        final dueDay = DateTime(dueDate.year, dueDate.month, dueDate.day);
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final overdue = dueDay.isBefore(today);
+
+        await scheduleNotification(
+          id: 200000 + idValue.toInt(),
+          title: overdue
+              ? 'আমার হিসাব — DPS কিস্তি বকেয়া'
+              : 'আমার হিসাব — DPS কিস্তি',
+          body: overdue
+              ? '$name: ${installment.toStringAsFixed(2)} টাকার কিস্তি বাকি।'
+              : '$name: ${installment.toStringAsFixed(2)} টাকার কিস্তি ${_dateText(dueDate)} তারিখে।',
+          scheduledDate: _nextReminderTime(dueDate),
+        );
+        count++;
+      }
+
+      return count;
     } finally {
       _syncing = false;
     }
