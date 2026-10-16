@@ -1587,6 +1587,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 title: _settings.isBangla ? 'বাজেট' : 'Budget',
                 onTap: () => _openScreen(const BudgetScreen()),
               ),
+              
+              _toolCard(
+                icon: Icons.notifications_active_rounded,
+                title: _settings.isBangla ? 'নোটিফিকেশন' : 'Notifications',
+                onTap: () => _openScreen(const NotificationScreen()),
+              ),
+
               _toolCard(
                 icon: Icons.receipt_long_rounded,
                 title: _settings.t('transactions'),
@@ -1855,6 +1862,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       _openScreen(const BudgetScreen());
                     },
                   ),
+                  
+                  _drawerItem(
+                    icon: Icons.notifications_active_rounded,
+                    title: _settings.isBangla ? 'নোটিফিকেশন' : 'Notifications',
+                    onTap: () {
+                      _openScreen(const NotificationScreen());
+                    },
+                  ),
+
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
