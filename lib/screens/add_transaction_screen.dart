@@ -25,6 +25,7 @@ class _AddTransactionScreenState
   final _personController = TextEditingController();
 
   AppSettings get settings => AppSettings.instance;
+  MoneyDb get _db => MoneyDb.instance;
 
   String _type = 'expense';
 
@@ -33,6 +34,7 @@ class _AddTransactionScreenState
   int? _toAccountId;
   int? _selectedCategoryId;
   int? _selectedLoanId;
+  int? _selectedSavingsId;
 
   DateTime _selectedDate = DateTime.now();
   DateTime? _dueDate;
@@ -40,6 +42,7 @@ class _AddTransactionScreenState
   List<Map<String, dynamic>> _accounts = [];
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _loans = [];
+  List<Map<String, dynamic>> _savings = [];
 
   bool _loading = true;
   bool _saving = false;
@@ -49,6 +52,7 @@ class _AddTransactionScreenState
   bool get _isLoanTaken => _type == 'loan_taken';
   bool get _isLoanReceived => _type == 'loan_received';
   bool get _isLoanPaid => _type == 'loan_paid';
+  bool get _isSavings => _type == 'savings';
 
   bool get _isNewLoan => _isLoanGiven || _isLoanTaken;
 
@@ -77,6 +81,9 @@ class _AddTransactionScreenState
   String _text(String bn, String en) =>
       settings.isBangla ? bn : en;
 
+  String _errorText(Object error) =>
+      error.toString().replaceFirst('Exception: ', '');
+
   String _formatAmount(dynamic value) {
     final amount = (value as num?)?.toDouble() ?? 0;
     return amount == amount.toInt()
@@ -84,19 +91,16 @@ class _AddTransactionScreenState
         : amount.toStringAsFixed(2);
   }
 
-  String _errorText(Object error) =>
-      error.toString().replaceFirst('Exception: ', '');
-
   Future<void> _loadInitialData() async {
     try {
-      final accounts = await MoneyDb.instance.getAccounts();
-      final loans = await MoneyDb.instance.getLoans();
+      final accounts = await _db.getAccounts();
+      final loans = await _db.getLoans();
+      final savings = await _db.getSavings();
 
       Map<String, dynamic>? existing;
 
       if (_isEdit) {
-        final transactions =
-            await MoneyDb.instance.getTransactions();
+        final transactions = await _db.getTransactions();
 
         for (final transaction in transactions) {
           if ((transaction['id'] as num?)?.toInt() ==
@@ -110,8 +114,7 @@ class _AddTransactionScreenState
       String initialType = 'expense';
 
       if (existing != null) {
-        initialType =
-            existing['type']?.toString() ?? 'expense';
+        initialType = existing['type']?.toString() ?? 'expense';
 
         _amountController.text =
             (existing['amount'] as num?)?.toString() ?? '';
@@ -125,7 +128,10 @@ class _AddTransactionScreenState
         final date = DateTime.tryParse(
           existing['transaction_date']?.toString() ?? '',
         );
-        if (date != null) _selectedDate = date;
+
+        if (date != null) {
+          _selectedDate = date;
+        }
 
         _selectedAccountId =
             (existing['account_id'] as num?)?.toInt();
@@ -141,13 +147,14 @@ class _AddTransactionScreenState
 
         _selectedLoanId =
             (existing['loan_id'] as num?)?.toInt();
+
+        _selectedSavingsId =
+            (existing['savings_id'] as num?)?.toInt();
       }
 
       final categories =
           initialType == 'income' || initialType == 'expense'
-              ? await MoneyDb.instance.getCategories(
-                  type: initialType,
-                )
+              ? await _db.getCategories(type: initialType)
               : <Map<String, dynamic>>[];
 
       if (!mounted) return;
@@ -157,6 +164,7 @@ class _AddTransactionScreenState
         _accounts = accounts;
         _categories = categories;
         _loans = loans;
+        _savings = savings;
 
         if (_selectedAccountId == null && accounts.isNotEmpty) {
           _selectedAccountId =
@@ -179,6 +187,11 @@ class _AddTransactionScreenState
               (categories.first['id'] as num).toInt();
         }
 
+        if (_selectedSavingsId == null && savings.isNotEmpty) {
+          _selectedSavingsId =
+              (savings.first['id'] as num).toInt();
+        }
+
         _loading = false;
       });
     } catch (e) {
@@ -191,6 +204,17 @@ class _AddTransactionScreenState
   Future<void> _onTypeChanged(String newType) async {
     if (_saving || _type == newType) return;
 
+    if (_isEdit) {
+      _showMessage(
+        _text(
+          'সম্পাদনার সময় লেনদেনের ধরন পরিবর্তন করা যাবে না।',
+          'Transaction type cannot be changed while editing.',
+        ),
+        isError: true,
+      );
+      return;
+    }
+
     setState(() {
       _type = newType;
       _selectedCategoryId = null;
@@ -202,33 +226,36 @@ class _AddTransactionScreenState
     try {
       final categories =
           newType == 'income' || newType == 'expense'
-              ? await MoneyDb.instance.getCategories(
-                  type: newType,
-                )
+              ? await _db.getCategories(type: newType)
               : <Map<String, dynamic>>[];
 
-      final loans = await MoneyDb.instance.getLoans();
+      final loans = await _db.getLoans();
+      final savings = await _db.getSavings();
 
       if (!mounted) return;
 
       setState(() {
         _categories = categories;
         _loans = loans;
+        _savings = savings;
 
         if (categories.isNotEmpty) {
           _selectedCategoryId =
               (categories.first['id'] as num).toInt();
         }
 
+        if (savings.isNotEmpty) {
+          _selectedSavingsId =
+              (savings.first['id'] as num).toInt();
+        }
+
         if (_isLoanRepayment) {
           final desiredType =
               _isLoanReceived ? 'receivable' : 'payable';
 
-          final available = loans.where(
-            (loan) =>
-                loan['type']?.toString() == desiredType &&
-                ((loan['remaining'] as num?)?.toDouble() ?? 0) > 0,
-          );
+          final available = loans.where((loan) =>
+              loan['type']?.toString() == desiredType &&
+              ((loan['remaining'] as num?)?.toDouble() ?? 0) > 0);
 
           _selectedLoanId = available.isEmpty
               ? null
@@ -245,6 +272,8 @@ class _AddTransactionScreenState
   }
 
   Future<void> _addCategory() async {
+    if (_type != 'income' && _type != 'expense') return;
+
     final controller = TextEditingController();
 
     final name = await showDialog<String>(
@@ -288,15 +317,11 @@ class _AddTransactionScreenState
     if (name == null || name.trim().isEmpty) return;
 
     try {
-      final existing = await MoneyDb.instance.getCategories(
-        type: _type,
-      );
+      final existing = await _db.getCategories(type: _type);
 
-      if (existing.any(
-        (item) =>
-            item['name'].toString().trim().toLowerCase() ==
-            name.trim().toLowerCase(),
-      )) {
+      if (existing.any((item) =>
+          item['name'].toString().trim().toLowerCase() ==
+          name.trim().toLowerCase())) {
         _showMessage(
           _text('এই খাতটি আগে থেকেই আছে', 'Category already exists'),
           isError: true,
@@ -304,16 +329,14 @@ class _AddTransactionScreenState
         return;
       }
 
-      final id = await MoneyDb.instance.addCategory(
+      final id = await _db.addCategory(
         name: name.trim(),
         type: _type,
         icon: Icons.category_outlined.codePoint,
         color: AppTheme.green.toARGB32(),
       );
 
-      final categories = await MoneyDb.instance.getCategories(
-        type: _type,
-      );
+      final categories = await _db.getCategories(type: _type);
 
       if (!mounted) return;
 
@@ -366,8 +389,7 @@ class _AddTransactionScreenState
   }
 
   Future<void> _selectDueDate() async {
-    final initial = _dueDate ?? _selectedDate;
-    final date = await _pickDate(initial);
+    final date = await _pickDate(_dueDate ?? _selectedDate);
     if (date == null || !mounted) return;
 
     setState(() {
@@ -382,8 +404,7 @@ class _AddTransactionScreenState
   }
 
   String _dateText() => _formatDate(_selectedDate);
-
-  String _accountName(Map<String, dynamic> account) {
+    String _accountName(Map<String, dynamic> account) {
     final name = account['name']?.toString() ?? '';
 
     switch (name.toLowerCase()) {
@@ -418,6 +439,8 @@ class _AddTransactionScreenState
         return _text('ধার ফেরত পেয়েছি', 'Loan Received');
       case 'loan_paid':
         return _text('ধার শোধ করেছি', 'Loan Repaid');
+      case 'savings':
+        return _text('সঞ্চয় / DPS', 'Savings / DPS');
       default:
         return type;
     }
@@ -435,6 +458,8 @@ class _AddTransactionScreenState
       case 'loan_taken':
       case 'loan_paid':
         return const Color(0xFF8E72C7);
+      case 'savings':
+        return AppTheme.gold;
       default:
         return const Color(0xFFD9534F);
     }
@@ -454,11 +479,14 @@ class _AddTransactionScreenState
         return Icons.payments_outlined;
       case 'loan_paid':
         return Icons.price_check_rounded;
+      case 'savings':
+        return Icons.savings_outlined;
       default:
         return Icons.north_east_rounded;
     }
   }
-    Widget _buildTypeSelector() {
+
+  Widget _buildTypeSelector() {
     const types = [
       'expense',
       'income',
@@ -467,6 +495,7 @@ class _AddTransactionScreenState
       'loan_taken',
       'loan_received',
       'loan_paid',
+      'savings',
     ];
 
     return Column(
@@ -572,6 +601,7 @@ class _AddTransactionScreenState
             ),
             validator: (value) {
               final amount = double.tryParse((value ?? '').trim());
+
               if (amount == null ||
                   !amount.isFinite ||
                   amount <= 0) {
@@ -580,6 +610,7 @@ class _AddTransactionScreenState
                   'Enter a valid amount',
                 );
               }
+
               return null;
             },
           ),
@@ -609,6 +640,7 @@ class _AddTransactionScreenState
       ),
       items: _accounts.map((account) {
         final id = (account['id'] as num).toInt();
+
         return DropdownMenuItem<int>(
           value: id,
           child: Text(_accountName(account)),
@@ -644,6 +676,7 @@ class _AddTransactionScreenState
           ),
           items: _accounts.map((account) {
             final id = (account['id'] as num).toInt();
+
             return DropdownMenuItem<int>(
               value: id,
               child: Text(_accountName(account)),
@@ -654,6 +687,7 @@ class _AddTransactionScreenState
               : (value) {
                   setState(() {
                     _fromAccountId = value;
+
                     if (_fromAccountId == _toAccountId) {
                       _toAccountId = _accounts
                           .map((a) => (a['id'] as num).toInt())
@@ -671,9 +705,9 @@ class _AddTransactionScreenState
         const SizedBox(height: 12),
         DropdownButtonFormField<int>(
           initialValue: _accounts.any(
-            (a) => (a['id'] as num?)?.toInt() == _toAccountId,
-          ) &&
-                  _toAccountId != _fromAccountId
+                (a) => (a['id'] as num?)?.toInt() == _toAccountId,
+              ) &&
+              _toAccountId != _fromAccountId
               ? _toAccountId
               : null,
           decoration: InputDecoration(
@@ -687,6 +721,7 @@ class _AddTransactionScreenState
               )
               .map((account) {
             final id = (account['id'] as num).toInt();
+
             return DropdownMenuItem<int>(
               value: id,
               child: Text(_accountName(account)),
@@ -717,6 +752,7 @@ class _AddTransactionScreenState
             ),
             items: _categories.map((category) {
               final id = (category['id'] as num).toInt();
+
               return DropdownMenuItem<int>(
                 value: id,
                 child: Text(category['name']?.toString() ?? ''),
@@ -738,7 +774,44 @@ class _AddTransactionScreenState
     );
   }
 
-  Widget _buildPersonField() {
+  Widget _buildSavingsDropdown() {
+    if (_savings.isEmpty) {
+      return _emptyMessage(
+        _text(
+          'কোনো সঞ্চয়/DPS পাওয়া যায়নি। আগে সঞ্চয় তৈরি করুন।',
+          'No savings/DPS found. Create a savings plan first.',
+        ),
+      );
+    }
+
+    return DropdownButtonFormField<int>(
+      initialValue: _savings.any(
+        (s) => (s['id'] as num?)?.toInt() == _selectedSavingsId,
+      )
+          ? _selectedSavingsId
+          : null,
+      decoration: InputDecoration(
+        labelText: _text('সঞ্চয় / DPS নির্বাচন', 'Select Savings / DPS'),
+        prefixIcon: const Icon(Icons.savings_outlined),
+      ),
+      items: _savings.map((saving) {
+        final id = (saving['id'] as num).toInt();
+
+        final name = saving['name']?.toString() ??
+            saving['title']?.toString() ??
+            _text('সঞ্চয় #$id', 'Savings #$id');
+
+        return DropdownMenuItem<int>(
+          value: id,
+          child: Text(name, overflow: TextOverflow.ellipsis),
+        );
+      }).toList(),
+      onChanged: _saving
+          ? null
+          : (value) => setState(() => _selectedSavingsId = value),
+    );
+  }
+    Widget _buildPersonField() {
     return TextFormField(
       controller: _personController,
       readOnly: _isEdit,
@@ -783,6 +856,7 @@ class _AddTransactionScreenState
       ),
       items: _repaymentLoans.map((loan) {
         final id = (loan['id'] as num).toInt();
+
         final remaining =
             (loan['remaining'] as num?)?.toDouble() ?? 0;
 
@@ -903,9 +977,9 @@ class _AddTransactionScreenState
       child: Text(message),
     );
   }
-    Future<void> _saveTransaction() async {
-    if (_saving) return;
 
+  Future<void> _saveTransaction() async {
+    if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
 
     final amount = double.tryParse(_amountController.text.trim());
@@ -960,6 +1034,34 @@ class _AddTransactionScreenState
         isError: true,
       );
       return;
+    }
+
+    if (_isSavings) {
+      if (_selectedSavingsId == null ||
+          !_savings.any(
+            (item) =>
+                (item['id'] as num?)?.toInt() == _selectedSavingsId,
+          )) {
+        _showMessage(
+          _text(
+            'সঞ্চয় / DPS নির্বাচন করুন',
+            'Select a savings plan',
+          ),
+          isError: true,
+        );
+        return;
+      }
+
+      if (_isEdit) {
+        _showMessage(
+          _text(
+            'সঞ্চয়ের জমা এই স্ক্রিন থেকে সম্পাদনা করা যাবে না।',
+            'Savings contributions cannot be edited on this screen.',
+          ),
+          isError: true,
+        );
+        return;
+      }
     }
 
     if (_isLoanRepayment) {
@@ -1022,7 +1124,7 @@ class _AddTransactionScreenState
       final note = _noteController.text.trim();
 
       if (_isEdit) {
-        await MoneyDb.instance.updateTransaction(
+        await _db.updateTransaction(
           widget.transactionId!,
           type: _type,
           amount: amount,
@@ -1034,8 +1136,19 @@ class _AddTransactionScreenState
           note: note,
           transactionDate: _selectedDate,
         );
+      } else if (_isSavings) {
+        final categoryId = await _db.ensureSavingsCategoryId();
+
+        await _db.addSavingsContribution(
+          savingsId: _selectedSavingsId!,
+          amount: amount,
+          accountId: _selectedAccountId!,
+          categoryId: categoryId,
+          note: note,
+          transactionDate: _selectedDate,
+        );
       } else if (_isNewLoan) {
-        await MoneyDb.instance.createLoan(
+        await _db.createLoan(
           personName: _personController.text.trim(),
           type: _isLoanGiven ? 'receivable' : 'payable',
           amount: amount,
@@ -1045,7 +1158,7 @@ class _AddTransactionScreenState
           dueDate: _dueDate,
         );
       } else if (_isLoanRepayment) {
-        await MoneyDb.instance.addLoanRepayment(
+        await _db.addLoanRepayment(
           loanId: _selectedLoanId!,
           amount: amount,
           accountId: _selectedAccountId!,
@@ -1053,7 +1166,7 @@ class _AddTransactionScreenState
           transactionDate: _selectedDate,
         );
       } else {
-        await MoneyDb.instance.addTransaction(
+        await _db.addTransaction(
           type: _type,
           amount: amount,
           categoryId: _selectedCategoryId,
@@ -1130,15 +1243,45 @@ class _AddTransactionScreenState
                       const SizedBox(height: 14),
                     ],
 
-                    if (_isTransfer) ...[
-                      _buildTransferAccounts(),
-                    ] else ...[
+                    if (_isTransfer)
+                      _buildTransferAccounts()
+                    else
                       _buildAccountDropdown(),
-                    ],
 
                     if (_type == 'income' || _type == 'expense') ...[
                       const SizedBox(height: 14),
                       _buildCategoryDropdown(),
+                    ],
+
+                    if (_isSavings) ...[
+                      const SizedBox(height: 14),
+                      _buildSavingsDropdown(),
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.gold.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.info_outline_rounded,
+                              color: AppTheme.gold,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                _text(
+                                  'জমার টাকা নির্বাচিত অ্যাকাউন্ট থেকে কাটা হবে এবং সঞ্চয়ের হিসাবেও যুক্ত হবে।',
+                                  'The contribution will be deducted from the selected account and added to savings history.',
+                                ),
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
 
                     if (_isLoanTransaction) ...[
