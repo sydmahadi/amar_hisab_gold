@@ -1,18 +1,24 @@
+
 import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
 import 'services/app_settings.dart';
 import 'services/money_db.dart';
+import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize local database before the app starts.
+  // Initialize the existing database without deleting user data.
   await MoneyDb.instance.init();
 
-  // Initialize app settings.
+  // Initialize saved language and theme settings.
   await AppSettings.instance.init();
+
+  // Initialize notifications and request permission.
+  await NotificationService.instance.init();
+  await NotificationService.instance.requestPermission();
 
   runApp(const AmarHisabApp());
 }
@@ -28,7 +34,6 @@ class _AmarHisabAppState extends State<AmarHisabApp> {
   @override
   void initState() {
     super.initState();
-
     AppSettings.instance.addListener(_settingsChanged);
   }
 
@@ -50,17 +55,11 @@ class _AmarHisabAppState extends State<AmarHisabApp> {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-
       title: settings.t('appName'),
-
       theme: AppTheme.light(),
-
       darkTheme: AppTheme.dark(),
-
-      themeMode: settings.isDarkMode
-          ? ThemeMode.dark
-          : ThemeMode.light,
-
+      themeMode:
+          settings.isDarkMode ? ThemeMode.dark : ThemeMode.light,
       home: const HomeScreen(),
     );
   }
