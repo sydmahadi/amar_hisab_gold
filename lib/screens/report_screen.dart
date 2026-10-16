@@ -203,7 +203,18 @@ class _ReportScreenState extends State<ReportScreen> {
 
     return '${months[date.month - 1]} ${date.year}';
   }
+DateTime _parseDate(dynamic value) {
+  if (value == null) return DateTime.now();
 
+  if (value is DateTime) return value;
+
+  if (value is int) {
+    return DateTime.fromMillisecondsSinceEpoch(value);
+  }
+
+  final text = value.toString().trim();
+  return DateTime.tryParse(text) ?? DateTime.now();
+}
   DateTime _transactionDate(Map<String, dynamic> tx) {
     return _parseDate(
       tx['date'] ??
@@ -350,7 +361,18 @@ class _ReportScreenState extends State<ReportScreen> {
       },
     );
   }
-
+String _transactionTypeText(String type) {
+  switch (type) {
+    case 'expense':
+      return 'ব্যয়';
+    case 'income':
+      return 'আয়';
+    case 'transfer':
+      return 'ট্রান্সফার';
+    default:
+      return 'লেনদেন';
+  }
+}
   Widget _buildExpenseCalendar() {
     final firstDay = DateTime(
       _calendarMonth.year,
