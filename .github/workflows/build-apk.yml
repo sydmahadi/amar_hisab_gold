@@ -74,7 +74,6 @@ jobs:
 
           content = settings.read_text()
 
-          # Keep AGP on version 8.x.
           content, agp_count = re.subn(
               r'(id\(["\']com\.android\.application["\']\)'
               r'\s+version\s+)["\'][^"\']+["\']',
@@ -99,7 +98,6 @@ jobs:
 
           settings.write_text(content)
 
-          # Flutter 3.47.5 requires Gradle 8.14.0 or newer.
           wrapper = Path(
               "android/gradle/wrapper/gradle-wrapper.properties"
           )
@@ -146,7 +144,6 @@ jobs:
           content = gradle.read_text()
           is_kts = gradle.name.endswith(".kts")
 
-          # Configure compileSdk, whether it is numeric or a variable.
           if is_kts:
               content, count = re.subn(
                   r'(?m)^(\s*compileSdk\s*=\s*).*$',
@@ -165,21 +162,18 @@ jobs:
           if count != 1:
               raise SystemExit("ERROR: Could not configure compileSdk")
 
-          # Enable core library desugaring.
           if (
               "isCoreLibraryDesugaringEnabled" not in content
               and "coreLibraryDesugaringEnabled" not in content
           ):
-              if is_kts:
-                  replacement = (
-                      "compileOptions {\n"
+              replacement = (
+                  "compileOptions {\n"
+                  + (
                       "        isCoreLibraryDesugaringEnabled = true"
+                      if is_kts
+                      else "        coreLibraryDesugaringEnabled true"
                   )
-              else:
-                  replacement = (
-                      "compileOptions {\n"
-                      "        coreLibraryDesugaringEnabled true"
-                  )
+              )
 
               content, count = re.subn(
                   r'compileOptions\s*\{',
@@ -191,7 +185,6 @@ jobs:
               if count != 1:
                   raise SystemExit("ERROR: compileOptions block not found")
 
-          # Add the dependency only once.
           if "desugar_jdk_libs" not in content:
               match = re.search(r'dependencies\s*\{', content)
 
@@ -213,6 +206,75 @@ jobs:
                   content += '\n\ndependencies {' + dependency + '}\n'
 
           gradle.write_text(content)
+          print("Android app Gradle configured.")
+          print(content)
+          PY
+
+      - name: Configure Android notification manifest
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          manifest = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+          content = manifest.read_text()
+
+          content, count = re.subn(
+              r'android:label="[^"]*"',
+              'android:label="আমার হিসাব"',
+              content,
+              count=1
+          )
+
+          if count != 1:
+              raise SystemExit("ERROR: Could not set app display name")
+
+          permissions = [
+              "android.permission.INTERNET",
+              "android.permission.POST_NOTIFICATIONS",
+              "android.permission.RECEIVE_BOOT_COMPLETED",
+          ]
+
+          for permission in permissions:
+              if f'android:name="{permission}"' not in content:
+                  tag = (
+                      f'    <uses-permission '
+                      f'android:name="{permission}" />\n'
+                  )
+                  content = content.replace(
+                      '<application',
+                      tag + '\n    <application',
+                      1
+                  )
+
+          receiver = """
+                  <receiver
+                      android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+                      android:exported="false" />
+
+                  <receiver
+                      android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+                      android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                          <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                          <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                      </intent-filter>
+                  </receiver>
+          """
+
+          if "ScheduledNotificationReceiver" not in content:
+              content = content.replace(
+                  "</application>",
+                  receiver + "\n    </application>",
+                  1
+              )
+
+          manifest.write_text(content)
+          print("Notification manifest configured.")
           print(content)
           PY
 
@@ -225,31 +287,6 @@ jobs:
 
           grep -q '^android.enableJetifier=true$' android/gradle.properties \
             || echo 'android.enableJetifier=true' >> android/gradle.properties
-
-      - name: Set app display name
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          manifest = Path(
-              "android/app/src/main/AndroidManifest.xml"
-          )
-
-          content = manifest.read_text()
-
-          content, count = re.subn(
-              r'android:label="[^"]*"',
-              'android:label="আমার হিসাব"',
-              content,
-              count=1
-          )
-
-          if count:
-              manifest.write_text(content)
-
-          print("App display name configured.")
-          PY
 
       - name: Configure launcher icon
         run: |
@@ -296,6 +333,11 @@ jobs:
 
       - name: Build release APK
         run: flutter build apk --release
+
+      - name: Verify APK
+        run: |
+          test -f build/app/outputs/flutter-apk/app-release.apk
+          ls -lh build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
