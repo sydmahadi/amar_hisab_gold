@@ -38,9 +38,10 @@ dependencies:
 
   # Notifications and background tasks
   flutter_local_notifications: ^19.4.2
+  timezone: ^0.10.1
   workmanager: ^0.10.0
 
-  # Google Drive integration
+  # Existing Google integration dependencies
   google_sign_in: ^7.2.0
   googleapis: ^14.0.0
   http: ^1.5.0
