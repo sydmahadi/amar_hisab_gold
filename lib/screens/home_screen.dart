@@ -13,6 +13,7 @@ import 'report_screen.dart';
 import 'savings_screen.dart';
 import 'statistics_screen.dart';
 import 'transaction_screen.dart';
+import 'budget_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -1581,6 +1582,11 @@ class _HomeScreenState extends State<HomeScreen> {
             childAspectRatio: .92,
             children: [
               _toolCard(
+                icon: Icons.pie_chart_rounded,
+                title: _settings.isBangla ? 'বাজেট' : 'Budget',
+                onTap: () => _openScreen(const BudgetScreen()),
+              ),
+              _toolCard(
                 icon: Icons.receipt_long_rounded,
                 title: _settings.t('transactions'),
                 onTap: () => _openScreen(const TransactionsScreen()),
@@ -1841,7 +1847,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       _openScreen(const SavingsScreen());
                     },
                   ),
-
+                  _drawerItem(
+                    icon: Icons.pie_chart_rounded,
+                    title: _settings.isBangla ? 'বাজেট' : 'Budget',
+                    onTap: () {
+                      _openScreen(const BudgetScreen());
+                    },
+                  ),
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
