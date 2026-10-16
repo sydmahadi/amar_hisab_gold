@@ -14,6 +14,7 @@ import 'savings_screen.dart';
 import 'statistics_screen.dart';
 import 'transaction_screen.dart';
 import 'budget_screen.dart';
+import 'notification_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
