@@ -1590,7 +1590,7 @@ class _HomeScreenState extends State<HomeScreen> {
               
               _toolCard(
                 icon: Icons.notifications_active_rounded,
-                title: _settings.isBangla ? 'নোটিফিকেশন' : 'Notifications',
+                title: _settings.isBangla ? 'রিমাইন্ডার' : 'Reminder',
                 onTap: () => _openScreen(const NotificationScreen()),
               ),
 
@@ -1865,7 +1865,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   
                   _drawerItem(
                     icon: Icons.notifications_active_rounded,
-                    title: _settings.isBangla ? 'নোটিফিকেশন' : 'Notifications',
+                    title: _settings.isBangla ? 'রিমাইন্ডার' : 'Reminder',
                     onTap: () {
                       _openScreen(const NotificationScreen());
                     },
