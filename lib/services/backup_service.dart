@@ -49,10 +49,6 @@ class BackupService {
   }
 
   /// Requests permission to use a folder chosen by the user.
-  ///
-  /// The native Android SAF implementation will be added in the
-  /// next step. The selected folder must remain accessible after
-  /// the app is closed or restarted.
   Future<bool> chooseBackupFolder() async {
     try {
       final result = await _channel.invokeMethod<bool>(
@@ -71,8 +67,7 @@ class BackupService {
       );
     } on MissingPluginException {
       throw Exception(
-        'Android backup integration এখনো যুক্ত করা হয়নি। '
-        'পরবর্তী ধাপে এটি যুক্ত করা হবে।',
+        'Android backup integration এখনো যুক্ত করা হয়নি।',
       );
     }
   }
@@ -82,7 +77,7 @@ class BackupService {
     return prefs.getBool(_folderSelectedKey) ?? false;
   }
 
-  /// Creates a JSON backup containing all supported database tables.
+  /// Creates a JSON backup containing supported database tables.
   Future<String> createBackupJson({
     Map<String, dynamic> settings = const {},
   }) async {
@@ -90,26 +85,29 @@ class BackupService {
       settings: settings,
     );
 
-    // Validate that the generated JSON can be decoded.
     final decoded = jsonDecode(json);
 
     if (decoded is! Map<String, dynamic> ||
         decoded['app'] != 'AmarHisab' ||
         decoded['tables'] is! Map) {
-      throw Exception('ব্যাকআপ তৈরি করা যায়নি: তথ্য যাচাই ব্যর্থ।');
+      throw Exception(
+        'ব্যাকআপ তৈরি করা যায়নি: তথ্য যাচাই ব্যর্থ।',
+      );
     }
 
     return json;
   }
 
-  /// Saves the backup in the previously selected phone folder.
+  /// Saves a backup to the previously selected phone folder.
   ///
-  /// Requires the native Android SAF integration from the next step.
+  /// Requires the native Android SAF integration.
   Future<String> saveBackupToPhone({
     Map<String, dynamic> settings = const {},
   }) async {
     if (!await hasBackupFolder()) {
-      throw Exception('প্রথমে ব্যাকআপ রাখার ফোল্ডার নির্বাচন করো।');
+      throw Exception(
+        'প্রথমে ব্যাকআপ রাখার ফোল্ডার নির্বাচন করো।',
+      );
     }
 
     final json = await createBackupJson(settings: settings);
@@ -124,13 +122,17 @@ class BackupService {
         '${now.second.toString().padLeft(2, '0')}.json';
 
     try {
-      await _channel.invokeMethod<bool>(
+      final result = await _channel.invokeMethod<bool>(
         'saveBackupToFolder',
         <String, dynamic>{
           'filename': filename,
           'content': json,
         },
       );
+
+      if (result != true) {
+        throw Exception('ব্যাকআপ ফাইল সংরক্ষণ নিশ্চিত করা যায়নি।');
+      }
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
@@ -150,7 +152,7 @@ class BackupService {
     }
   }
 
-  /// Lets the user export a backup to a location they choose.
+  /// Exports a JSON backup using the system save-file dialog.
   Future<String?> exportBackupFile({
     Map<String, dynamic> settings = const {},
   }) async {
@@ -162,7 +164,7 @@ class BackupService {
         '${now.month.toString().padLeft(2, '0')}'
         '${now.day.toString().padLeft(2, '0')}.json';
 
-    final path = await FilePicker.platform.saveFile(
+    final path = await FilePicker.saveFile(
       dialogTitle: 'আমার হিসাব ব্যাকআপ সংরক্ষণ করুন',
       fileName: filename,
       type: FileType.custom,
@@ -181,34 +183,38 @@ class BackupService {
     return path;
   }
 
-  /// Opens a JSON backup file and restores the database.
+  /// Opens a JSON backup and restores the database.
   ///
-  /// The caller must ask the user for confirmation before calling
-  /// this method, because restoration replaces existing records.
+  /// The caller should obtain user confirmation before restoration.
   Future<Map<String, dynamic>> restoreFromFile() async {
-    final result = await FilePicker.platform.pickFiles(
+    final file = await FilePicker.pickFile(
       dialogTitle: 'আমার হিসাব ব্যাকআপ ফাইল নির্বাচন করুন',
       type: FileType.custom,
       allowedExtensions: ['json'],
-      withData: true,
-      allowMultiple: false,
     );
 
-    if (result == null || result.files.isEmpty) {
+    if (file == null) {
       throw Exception('কোনো ব্যাকআপ ফাইল নির্বাচন করা হয়নি।');
     }
 
-    final file = result.files.single;
-    final bytes = file.bytes;
+    final bytes = await file.readAsBytes();
 
-    if (bytes == null || bytes.isEmpty) {
-      throw Exception('ব্যাকআপ ফাইলটি খোলা যাচ্ছে না বা খালি।');
+    if (bytes.isEmpty) {
+      throw Exception('ব্যাকআপ ফাইলটি খালি।');
     }
 
-    final json = utf8.decode(bytes, allowMalformed: false);
+    late final String json;
 
-    // MoneyDb validates the backup structure and restores it
-    // inside a database transaction.
+    try {
+      json = utf8.decode(bytes, allowMalformed: false);
+    } on FormatException {
+      throw Exception(
+        'ব্যাকআপ ফাইলের লেখা সঠিক UTF-8 ফরম্যাটে নেই।',
+      );
+    }
+
+    // MoneyDb validates the backup and performs the restoration.
+    // Existing records are replaced according to MoneyDb's logic.
     final restoredSettings =
         await MoneyDb.instance.restoreBackup(json);
 
@@ -217,8 +223,8 @@ class BackupService {
 
   /// Runs a backup if at least seven days have passed.
   ///
-  /// Call this when the app starts. For scheduled execution while
-  /// the app is closed, Android WorkManager integration is required.
+  /// For execution while the app is closed, Android WorkManager
+  /// integration is required.
   Future<String?> runWeeklyBackupIfDue({
     Map<String, dynamic> settings = const {},
   }) async {
