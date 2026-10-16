@@ -22,11 +22,8 @@ class AboutScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
         children: [
           _buildHero(context),
-
           const SizedBox(height: 18),
-
           _buildIntro(context),
-
           const SizedBox(height: 18),
 
           _buildFeatureSection(
@@ -103,8 +100,84 @@ class AboutScreen extends StatelessWidget {
           ),
 
           const SizedBox(height: 16),
-
           _buildLoanHighlight(context),
+
+          const SizedBox(height: 16),
+
+          // নতুন ফিচার: সঞ্চয় ও DPS
+          _buildFeatureSection(
+            context,
+            title: isBangla ? 'সঞ্চয় ও DPS' : 'Savings & DPS',
+            subtitle: isBangla
+                ? 'সঞ্চয় এবং কিস্তির হিসাব গুছিয়ে রাখুন'
+                : 'Keep savings and installment records organized',
+            icon: Icons.savings_rounded,
+            features: [
+              _FeatureData(
+                Icons.savings_rounded,
+                isBangla ? 'সঞ্চয়ের হিসাব' : 'Savings records',
+                isBangla
+                    ? 'আপনার সঞ্চয়ের তথ্য ও অগ্রগতি সংরক্ষণ করুন।'
+                    : 'Keep track of your savings and progress.',
+              ),
+              _FeatureData(
+                Icons.event_repeat_rounded,
+                isBangla ? 'DPS কিস্তি' : 'DPS installments',
+                isBangla
+                    ? 'DPS-এর কিস্তি ও সংশ্লিষ্ট তথ্য গুছিয়ে রাখুন।'
+                    : 'Organize your DPS installment records.',
+              ),
+              _FeatureData(
+                Icons.notifications_active_rounded,
+                isBangla ? 'কিস্তির রিমাইন্ডার' : 'Installment reminders',
+                isBangla
+                    ? 'কিস্তির নির্ধারিত তারিখ মনে রাখতে রিমাইন্ডার ব্যবহার করুন।'
+                    : 'Use reminders to keep track of installment due dates.',
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          // নতুন ফিচার: Reminder ও Notifications
+          _buildFeatureSection(
+            context,
+            title: isBangla ? 'রিমাইন্ডার ও নোটিফিকেশন' : 'Reminders & Notifications',
+            subtitle: isBangla
+                ? 'গুরুত্বপূর্ণ তারিখ ও বকেয়ার কথা মনে রাখুন'
+                : 'Keep track of important dates and dues',
+            icon: Icons.notifications_active_rounded,
+            features: [
+              _FeatureData(
+                Icons.event_note_rounded,
+                isBangla ? 'আগামী ৭ দিনের রিমাইন্ডার' : 'Next 7 days reminders',
+                isBangla
+                    ? 'আগামী সাত দিনের নির্ধারিত রিমাইন্ডার একসঙ্গে দেখুন।'
+                    : 'View scheduled reminders for the next seven days.',
+              ),
+              _FeatureData(
+                Icons.alarm_rounded,
+                isBangla ? 'নির্ধারিত রিমাইন্ডার' : 'Scheduled reminders',
+                isBangla
+                    ? 'প্রয়োজনীয় কাজ বা পেমেন্টের জন্য রিমাইন্ডার নির্ধারণ করুন।'
+                    : 'Schedule reminders for important tasks or payments.',
+              ),
+              _FeatureData(
+                Icons.account_balance_rounded,
+                isBangla ? 'দেনা-পাওনার স্মরণ' : 'Loan and due reminders',
+                isBangla
+                    ? 'প্রযোজ্য ক্ষেত্রে দেনা-পাওনা ও বকেয়ার নির্ধারিত তারিখ মনে রাখুন।'
+                    : 'Keep track of scheduled loan and outstanding payment dates.',
+              ),
+              _FeatureData(
+                Icons.phone_android_rounded,
+                isBangla ? 'ফোনের নোটিফিকেশন' : 'Phone notifications',
+                isBangla
+                    ? 'নোটিফিকেশন সুবিধা চালু ও অনুমোদিত থাকলে ফোনে রিমাইন্ডার পেতে পারেন।'
+                    : 'Receive phone reminders when notifications are enabled and permitted.',
+              ),
+            ],
+          ),
 
           const SizedBox(height: 16),
 
@@ -155,7 +228,6 @@ class AboutScreen extends StatelessWidget {
           ),
 
           const SizedBox(height: 16),
-
           _buildReportHighlight(context),
 
           const SizedBox(height: 16),
@@ -188,7 +260,7 @@ class AboutScreen extends StatelessWidget {
                 Icons.calendar_month_rounded,
                 isBangla ? 'মাস অনুযায়ী ফিল্টার' : 'Month filter',
                 isBangla
-                    ? 'নির্দিষ্ট মাসের হিসাব একসাথে দেখুন।'
+                    ? 'নির্দিষ্ট মাসের হিসাব একসঙ্গে দেখুন।'
                     : 'View all transactions from a specific month.',
               ),
             ],
@@ -198,7 +270,7 @@ class AboutScreen extends StatelessWidget {
 
           _buildFeatureSection(
             context,
-            title: isBangla ? 'অ্যাপের সুবিধা' : 'App Features',
+            title: isBangla ? 'অ্যাপের অন্যান্য সুবিধা' : 'Other App Features',
             subtitle: isBangla
                 ? 'আপনার ব্যবহারের সুবিধার জন্য প্রয়োজনীয় অপশন'
                 : 'Useful options for a better experience',
@@ -243,11 +315,8 @@ class AboutScreen extends StatelessWidget {
           ),
 
           const SizedBox(height: 20),
-
           _buildDeveloperCard(context),
-
           const SizedBox(height: 18),
-
           _buildFooter(context),
         ],
       ),
@@ -261,10 +330,7 @@ class AboutScreen extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(22, 26, 22, 24),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [
-            AppTheme.darkGreen,
-            AppTheme.green,
-          ],
+          colors: [AppTheme.darkGreen, AppTheme.green],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -401,8 +467,8 @@ class AboutScreen extends StatelessWidget {
                 const SizedBox(height: 7),
                 Text(
                   isBangla
-                      ? 'আমার হিসাব একটি ব্যক্তিগত Money Manager অ্যাপ। আয়, ব্যয়, অ্যাকাউন্ট, লেনদেন, দেনা-পাওনা, পরিসংখ্যান ও রিপোর্ট—সবকিছু এক জায়গায় সহজভাবে পরিচালনা করার জন্য তৈরি।'
-                      : 'Amar Hisab is a personal Money Manager app designed to keep income, expenses, accounts, transactions, loans, statistics and reports organized in one place.',
+                      ? 'আমার হিসাব একটি ব্যক্তিগত Money Manager অ্যাপ। আয়, ব্যয়, অ্যাকাউন্ট, লেনদেন, দেনা-পাওনা, সঞ্চয়, DPS, রিমাইন্ডার, পরিসংখ্যান ও রিপোর্ট—সবকিছু এক জায়গায় সহজভাবে পরিচালনা করার জন্য তৈরি।'
+                      : 'Amar Hisab is a personal Money Manager app designed to organize income, expenses, accounts, transactions, loans, savings, DPS, reminders, statistics and reports in one place.',
                   style: TextStyle(
                     fontSize: 13,
                     height: 1.65,
@@ -450,11 +516,7 @@ class AboutScreen extends StatelessWidget {
                   color: AppTheme.green.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(13),
                 ),
-                child: Icon(
-                  icon,
-                  color: AppTheme.green,
-                  size: 22,
-                ),
+                child: Icon(icon, color: AppTheme.green, size: 22),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -486,30 +548,27 @@ class AboutScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 15),
-          ...List.generate(
-            features.length,
-            (index) {
-              final feature = features[index];
+          ...List.generate(features.length, (index) {
+            final feature = features[index];
 
-              return Column(
-                children: [
-                  _featureItem(
-                    context,
-                    feature.icon,
-                    feature.title,
-                    feature.description,
+            return Column(
+              children: [
+                _featureItem(
+                  context,
+                  feature.icon,
+                  feature.title,
+                  feature.description,
+                ),
+                if (index != features.length - 1)
+                  Divider(
+                    height: 18,
+                    color: Theme.of(context)
+                        .dividerColor
+                        .withValues(alpha: 0.35),
                   ),
-                  if (index != features.length - 1)
-                    Divider(
-                      height: 18,
-                      color: Theme.of(context)
-                          .dividerColor
-                          .withValues(alpha: 0.35),
-                    ),
-                ],
-              );
-            },
-          ),
+              ],
+            );
+          }),
         ],
       ),
     );
@@ -531,11 +590,7 @@ class AboutScreen extends StatelessWidget {
             color: AppTheme.gold.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(11),
           ),
-          child: Icon(
-            icon,
-            size: 18,
-            color: AppTheme.gold,
-          ),
+          child: Icon(icon, size: 18, color: AppTheme.gold),
         ),
         const SizedBox(width: 11),
         Expanded(
@@ -689,11 +744,7 @@ class AboutScreen extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(
-          icon,
-          size: 20,
-          color: AppTheme.gold,
-        ),
+        Icon(icon, size: 20, color: AppTheme.gold),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
@@ -836,11 +887,7 @@ class AboutScreen extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            icon,
-            size: 19,
-            color: AppTheme.gold,
-          ),
+          Icon(icon, size: 19, color: AppTheme.gold),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -913,10 +960,7 @@ class AboutScreen extends StatelessWidget {
             isBangla ? 'অ্যাপটি তৈরি করেছেন' : 'Developed by',
             style: TextStyle(
               fontSize: 12,
-              color: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.color,
+              color: Theme.of(context).textTheme.bodySmall?.color,
             ),
           ),
           const SizedBox(height: 3),
@@ -960,11 +1004,7 @@ class AboutScreen extends StatelessWidget {
             color: AppTheme.gold.withValues(alpha: 0.11),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(
-            icon,
-            color: AppTheme.gold,
-            size: 20,
-          ),
+          child: Icon(icon, color: AppTheme.gold, size: 20),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -975,10 +1015,7 @@ class AboutScreen extends StatelessWidget {
                 label,
                 style: TextStyle(
                   fontSize: 10.5,
-                  color: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.color,
+                  color: Theme.of(context).textTheme.bodySmall?.color,
                 ),
               ),
               const SizedBox(height: 2),
@@ -1016,10 +1053,7 @@ class AboutScreen extends StatelessWidget {
               : 'Manage your money easily',
           style: TextStyle(
             fontSize: 12,
-            color: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.color,
+            color: Theme.of(context).textTheme.bodySmall?.color,
           ),
         ),
         const SizedBox(height: 10),
