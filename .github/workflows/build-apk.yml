@@ -39,7 +39,7 @@ jobs:
           dart --version
           java -version
 
-      - name: Check project files
+      - name: Validate project
         run: |
           test -f pubspec.yaml
           test -f lib/main.dart
@@ -74,7 +74,7 @@ jobs:
 
           content = settings.read_text()
 
-          # Pin Android Gradle Plugin to an AGP 8.x release.
+          # Keep AGP on version 8.x.
           content, agp_count = re.subn(
               r'(id\(["\']com\.android\.application["\']\)'
               r'\s+version\s+)["\'][^"\']+["\']',
@@ -83,7 +83,6 @@ jobs:
               count=1
           )
 
-          # Pin Kotlin Gradle Plugin.
           content, kotlin_count = re.subn(
               r'(id\(["\']org\.jetbrains\.kotlin\.android["\']\)'
               r'\s+version\s+)["\'][^"\']+["\']',
@@ -93,42 +92,34 @@ jobs:
           )
 
           if agp_count != 1:
-              raise SystemExit(
-                  "ERROR: Could not set Android Gradle Plugin version. "
-                  "Inspect android/settings.gradle."
-              )
+              raise SystemExit("ERROR: Could not configure AGP 8.13.0")
 
           if kotlin_count != 1:
-              raise SystemExit(
-                  "ERROR: Could not set Kotlin plugin version. "
-                  "Inspect android/settings.gradle."
-              )
+              raise SystemExit("ERROR: Could not configure Kotlin 2.2.20")
 
           settings.write_text(content)
 
+          # Flutter 3.47.5 requires Gradle 8.14.0 or newer.
           wrapper = Path(
               "android/gradle/wrapper/gradle-wrapper.properties"
           )
 
-          if not wrapper.exists():
-              raise SystemExit("ERROR: Gradle wrapper properties not found")
-
           wrapper_content = wrapper.read_text()
 
-          wrapper_content, wrapper_count = re.subn(
+          wrapper_content, count = re.subn(
               r'(?m)^distributionUrl=.*$',
               'distributionUrl=https\\://services.gradle.org/'
-              'distributions/gradle-8.13-bin.zip',
+              'distributions/gradle-8.14.3-bin.zip',
               wrapper_content,
               count=1
           )
 
-          if wrapper_count != 1:
-              raise SystemExit("ERROR: Could not set Gradle wrapper version")
+          if count != 1:
+              raise SystemExit("ERROR: Could not configure Gradle wrapper")
 
           wrapper.write_text(wrapper_content)
 
-          print("Updated Android Gradle and Kotlin versions.")
+          print("Android Gradle versions configured.")
           print(settings.read_text())
           print(wrapper.read_text())
           PY
@@ -155,8 +146,7 @@ jobs:
           content = gradle.read_text()
           is_kts = gradle.name.endswith(".kts")
 
-          # Support numeric and variable compileSdk declarations, e.g.
-          # compileSdk = flutter.compileSdkVersion
+          # Configure compileSdk, whether it is numeric or a variable.
           if is_kts:
               content, count = re.subn(
                   r'(?m)^(\s*compileSdk\s*=\s*).*$',
@@ -173,14 +163,13 @@ jobs:
               )
 
           if count != 1:
-              print("Gradle file content:")
-              print(content)
               raise SystemExit("ERROR: Could not configure compileSdk")
 
           # Enable core library desugaring.
-          if "isCoreLibraryDesugaringEnabled" not in content and \
-             "coreLibraryDesugaringEnabled" not in content:
-
+          if (
+              "isCoreLibraryDesugaringEnabled" not in content
+              and "coreLibraryDesugaringEnabled" not in content
+          ):
               if is_kts:
                   replacement = (
                       "compileOptions {\n"
@@ -202,7 +191,7 @@ jobs:
               if count != 1:
                   raise SystemExit("ERROR: compileOptions block not found")
 
-          # Add desugaring dependency.
+          # Add the dependency only once.
           if "desugar_jdk_libs" not in content:
               match = re.search(r'dependencies\s*\{', content)
 
@@ -224,8 +213,6 @@ jobs:
                   content += '\n\ndependencies {' + dependency + '}\n'
 
           gradle.write_text(content)
-
-          print("Configured app Gradle:")
           print(content)
           PY
 
@@ -261,7 +248,7 @@ jobs:
           if count:
               manifest.write_text(content)
 
-          print("App name configured.")
+          print("App display name configured.")
           PY
 
       - name: Configure launcher icon
@@ -288,19 +275,21 @@ jobs:
           flutter clean
           flutter pub get
 
+      - name: Verify Gradle version
+        run: |
+          cd android
+          ./gradlew --version
+          cd ..
+
       - name: Verify File Picker installation
         run: |
           flutter pub deps
 
-          echo "Searching for FilePickerPlugin source..."
           find "$HOME/.pub-cache" \
             -path "*/file_picker-11.0.3/android/src/main/*" \
             -type f \
             \( -name "FilePickerPlugin.kt" -o -name "FilePickerPlugin.java" \) \
             -print
-
-          echo "Checking generated plugin registration..."
-          find android -name 'GeneratedPluginRegistrant.java' -print
 
       - name: Analyze Flutter code
         run: flutter analyze --no-fatal-infos
