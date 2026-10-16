@@ -36,9 +36,10 @@ jobs:
       - name: Show versions
         run: |
           flutter --version
+          dart --version
           java -version
 
-      - name: Validate project
+      - name: Check project files
         run: |
           test -f pubspec.yaml
           test -f lib/main.dart
@@ -52,70 +53,55 @@ jobs:
             --project-name amar_hisab \
             .
 
-      - name: Pin Android Gradle and Kotlin versions
+      - name: Configure Android Gradle versions
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          settings_files = [
+          settings_candidates = [
               Path("android/settings.gradle.kts"),
               Path("android/settings.gradle"),
           ]
 
           settings = next(
-              (p for p in settings_files if p.exists()),
+              (p for p in settings_candidates if p.exists()),
               None
           )
 
           if settings is None:
-              raise SystemExit("ERROR: Android settings.gradle not found")
+              raise SystemExit("ERROR: settings.gradle not found")
 
           content = settings.read_text()
 
-          # Use AGP 8.x to avoid the AGP 9 built-in Kotlin issue.
-          if settings.name.endswith(".kts"):
-              content, agp_count = re.subn(
-                  r'(id\(["\']com\.android\.application["\']\)'
-                  r'\s+version\s+)["\'][^"\']+["\']',
-                  r'\g<1>"8.13.0"',
-                  content,
-                  count=1
-              )
+          # Pin Android Gradle Plugin to an AGP 8.x release.
+          content, agp_count = re.subn(
+              r'(id\(["\']com\.android\.application["\']\)'
+              r'\s+version\s+)["\'][^"\']+["\']',
+              r'\g<1>"8.13.0"',
+              content,
+              count=1
+          )
 
-              content, kotlin_count = re.subn(
-                  r'(id\(["\']org\.jetbrains\.kotlin\.android["\']\)'
-                  r'\s+version\s+)["\'][^"\']+["\']',
-                  r'\g<1>"2.2.20"',
-                  content,
-                  count=1
-              )
-
-          else:
-              content, agp_count = re.subn(
-                  r'(id\s+["\']com\.android\.application["\']'
-                  r'\s+version\s+)["\'][^"\']+["\']',
-                  r'\g<1>"8.13.0"',
-                  content,
-                  count=1
-              )
-
-              content, kotlin_count = re.subn(
-                  r'(id\s+["\']org\.jetbrains\.kotlin\.android["\']'
-                  r'\s+version\s+)["\'][^"\']+["\']',
-                  r'\g<1>"2.2.20"',
-                  content,
-                  count=1
-              )
+          # Pin Kotlin Gradle Plugin.
+          content, kotlin_count = re.subn(
+              r'(id\(["\']org\.jetbrains\.kotlin\.android["\']\)'
+              r'\s+version\s+)["\'][^"\']+["\']',
+              r'\g<1>"2.2.20"',
+              content,
+              count=1
+          )
 
           if agp_count != 1:
               raise SystemExit(
-                  "ERROR: Could not pin Android application plugin version"
+                  "ERROR: Could not set Android Gradle Plugin version. "
+                  "Inspect android/settings.gradle."
               )
 
           if kotlin_count != 1:
               raise SystemExit(
-                  "ERROR: Could not pin Kotlin Android plugin version"
+                  "ERROR: Could not set Kotlin plugin version. "
+                  "Inspect android/settings.gradle."
               )
 
           settings.write_text(content)
@@ -129,41 +115,39 @@ jobs:
 
           wrapper_content = wrapper.read_text()
 
-          wrapper_content, count = re.subn(
-              r"distributionUrl=.*",
-              "distributionUrl=https\\://services.gradle.org/"
-              "distributions/gradle-8.13-bin.zip",
+          wrapper_content, wrapper_count = re.subn(
+              r'(?m)^distributionUrl=.*$',
+              'distributionUrl=https\\://services.gradle.org/'
+              'distributions/gradle-8.13-bin.zip',
               wrapper_content,
               count=1
           )
 
-          if count != 1:
-              raise SystemExit("ERROR: Could not configure Gradle wrapper")
+          if wrapper_count != 1:
+              raise SystemExit("ERROR: Could not set Gradle wrapper version")
 
           wrapper.write_text(wrapper_content)
 
+          print("Updated Android Gradle and Kotlin versions.")
           print(settings.read_text())
-          print("Gradle wrapper configured.")
+          print(wrapper.read_text())
           PY
 
-      - name: Get dependencies
+      - name: Get Flutter dependencies
         run: flutter pub get
 
-      - name: Configure Android app
+      - name: Configure Android app Gradle
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          gradle_files = [
+          candidates = [
               Path("android/app/build.gradle.kts"),
               Path("android/app/build.gradle"),
           ]
 
-          gradle = next(
-              (p for p in gradle_files if p.exists()),
-              None
-          )
+          gradle = next((p for p in candidates if p.exists()), None)
 
           if gradle is None:
               raise SystemExit("ERROR: App Gradle file not found")
@@ -171,56 +155,67 @@ jobs:
           content = gradle.read_text()
           is_kts = gradle.name.endswith(".kts")
 
-          # Set compile SDK 36.
+          # Support numeric and variable compileSdk declarations, e.g.
+          # compileSdk = flutter.compileSdkVersion
           if is_kts:
               content, count = re.subn(
-                  r'compileSdk\s*=\s*\d+',
-                  'compileSdk = 36',
+                  r'(?m)^(\s*compileSdk\s*=\s*).*$',
+                  r'\g<1>36',
                   content,
                   count=1
               )
           else:
               content, count = re.subn(
-                  r'compileSdk\s+\d+',
-                  'compileSdk 36',
+                  r'(?m)^(\s*compileSdk\s+).*$',
+                  r'\g<1>36',
                   content,
                   count=1
               )
 
           if count != 1:
-              raise SystemExit("ERROR: Could not set compileSdk")
+              print("Gradle file content:")
+              print(content)
+              raise SystemExit("ERROR: Could not configure compileSdk")
 
-          # Enable Java core library desugaring.
-          if "coreLibraryDesugaringEnabled" not in content:
+          # Enable core library desugaring.
+          if "isCoreLibraryDesugaringEnabled" not in content and \
+             "coreLibraryDesugaringEnabled" not in content:
+
               if is_kts:
-                  content, count = re.subn(
-                      r'(compileOptions\s*\{)',
-                      r'\1\n        isCoreLibraryDesugaringEnabled = true',
-                      content,
-                      count=1
+                  replacement = (
+                      "compileOptions {\n"
+                      "        isCoreLibraryDesugaringEnabled = true"
                   )
               else:
-                  content, count = re.subn(
-                      r'(compileOptions\s*\{)',
-                      r'\1\n        coreLibraryDesugaringEnabled true',
-                      content,
-                      count=1
+                  replacement = (
+                      "compileOptions {\n"
+                      "        coreLibraryDesugaringEnabled true"
                   )
+
+              content, count = re.subn(
+                  r'compileOptions\s*\{',
+                  replacement,
+                  content,
+                  count=1
+              )
 
               if count != 1:
                   raise SystemExit("ERROR: compileOptions block not found")
 
           # Add desugaring dependency.
           if "desugar_jdk_libs" not in content:
-              dependency = (
-                  '\n    coreLibraryDesugaring('
-                  '"com.android.tools:desugar_jdk_libs:2.1.4")\n'
-                  if is_kts
-                  else '\n    coreLibraryDesugaring '
-                  '"com.android.tools:desugar_jdk_libs:2.1.4"\n'
-              )
-
               match = re.search(r'dependencies\s*\{', content)
+
+              if is_kts:
+                  dependency = (
+                      '\n    coreLibraryDesugaring('
+                      '"com.android.tools:desugar_jdk_libs:2.1.4")\n'
+                  )
+              else:
+                  dependency = (
+                      '\n    coreLibraryDesugaring '
+                      '"com.android.tools:desugar_jdk_libs:2.1.4"\n'
+                  )
 
               if match:
                   pos = match.end()
@@ -229,27 +224,32 @@ jobs:
                   content += '\n\ndependencies {' + dependency + '}\n'
 
           gradle.write_text(content)
-          print(gradle.read_text())
+
+          print("Configured app Gradle:")
+          print(content)
           PY
 
-      - name: Configure AndroidX
+      - name: Enable AndroidX
         run: |
-          if ! grep -q '^android.useAndroidX=true' android/gradle.properties; then
-            echo 'android.useAndroidX=true' >> android/gradle.properties
-          fi
+          touch android/gradle.properties
 
-          if ! grep -q '^android.enableJetifier=true' android/gradle.properties; then
-            echo 'android.enableJetifier=true' >> android/gradle.properties
-          fi
+          grep -q '^android.useAndroidX=true$' android/gradle.properties \
+            || echo 'android.useAndroidX=true' >> android/gradle.properties
 
-      - name: Set app label
+          grep -q '^android.enableJetifier=true$' android/gradle.properties \
+            || echo 'android.enableJetifier=true' >> android/gradle.properties
+
+      - name: Set app display name
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          path = Path("android/app/src/main/AndroidManifest.xml")
-          content = path.read_text()
+          manifest = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          content = manifest.read_text()
 
           content, count = re.subn(
               r'android:label="[^"]*"',
@@ -259,9 +259,9 @@ jobs:
           )
 
           if count:
-              path.write_text(content)
+              manifest.write_text(content)
 
-          print("App label configured.")
+          print("App name configured.")
           PY
 
       - name: Configure launcher icon
@@ -288,22 +288,19 @@ jobs:
           flutter clean
           flutter pub get
 
-      - name: Verify File Picker Android source
+      - name: Verify File Picker installation
         run: |
+          flutter pub deps
+
+          echo "Searching for FilePickerPlugin source..."
           find "$HOME/.pub-cache" \
             -path "*/file_picker-11.0.3/android/src/main/*" \
             -type f \
             \( -name "FilePickerPlugin.kt" -o -name "FilePickerPlugin.java" \) \
             -print
 
-      - name: Verify Android Gradle versions
-        run: |
-          grep -nE 'com.android.application|kotlin.android' \
-            android/settings.gradle.kts \
-            android/settings.gradle 2>/dev/null || true
-
-          grep '^distributionUrl=' \
-            android/gradle/wrapper/gradle-wrapper.properties
+          echo "Checking generated plugin registration..."
+          find android -name 'GeneratedPluginRegistrant.java' -print
 
       - name: Analyze Flutter code
         run: flutter analyze --no-fatal-infos
