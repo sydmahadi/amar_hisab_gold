@@ -1,5 +1,7 @@
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
 
 class NotificationService {
   NotificationService._();
@@ -11,39 +13,60 @@ class NotificationService {
 
   bool _initialized = false;
 
+  static const String _channelId = 'amar_hisab_reminders';
+
   static const AndroidNotificationChannel _channel =
       AndroidNotificationChannel(
-    'amar_hisab_reminders',
-    'আমার হিসাব রিমাইন্ডার',
-    description: 'দেনা-পাওনা, বাজেট ও সঞ্চয়ের রিমাইন্ডার',
+    _channelId,
+    'Amar Hisab Reminders',
+    description: 'Loan, budget and savings reminders',
     importance: Importance.max,
   );
 
   Future<void> init() async {
     if (_initialized) return;
 
-    const AndroidInitializationSettings androidSettings =
+    tz_data.initializeTimeZones();
+
+    // Bangladesh local time.
+    tz.setLocalLocation(tz.getLocation('Asia/Dhaka'));
+
+    const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    const InitializationSettings settings = InitializationSettings(
+    const settings = InitializationSettings(
       android: androidSettings,
     );
 
     await _plugin.initialize(settings);
 
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+    final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
 
-    await androidPlugin?.createNotificationChannel(_channel);
-
+    await android?.createNotificationChannel(_channel);
     _initialized = true;
   }
 
   Future<bool?> requestPermission() async {
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+    await init();
+
+    final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
 
-    return androidPlugin?.requestNotificationsPermission();
+    return android?.requestNotificationsPermission();
+  }
+
+  NotificationDetails _details() {
+    const androidDetails = AndroidNotificationDetails(
+      _channelId,
+      'Amar Hisab Reminders',
+      channelDescription: 'Loan, budget and savings reminders',
+      importance: Importance.max,
+      priority: Priority.high,
+      playSound: true,
+    );
+
+    return const NotificationDetails(android: androidDetails);
   }
 
   Future<void> showNotification({
@@ -51,30 +74,52 @@ class NotificationService {
     required String title,
     required String body,
   }) async {
-    if (!_initialized) {
-      await init();
-    }
-
-    const AndroidNotificationDetails androidDetails =
-        AndroidNotificationDetails(
-      'amar_hisab_reminders',
-      'আমার হিসাব রিমাইন্ডার',
-      channelDescription: 'দেনা-পাওনা, বাজেট ও সঞ্চয়ের রিমাইন্ডার',
-      importance: Importance.max,
-      priority: Priority.high,
-      playSound: true,
-    );
-
-    const NotificationDetails details = NotificationDetails(
-      android: androidDetails,
-    );
+    await init();
 
     await _plugin.show(
       id,
       title,
       body,
-      details,
+      _details(),
     );
+  }
+
+  Future<void> scheduleNotification({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime scheduledDate,
+  }) async {
+    await init();
+
+    if (!scheduledDate.isAfter(DateTime.now())) {
+      return;
+    }
+
+    final scheduledTime = tz.TZDateTime.from(
+      scheduledDate,
+      tz.local,
+    );
+
+    await _plugin.zonedSchedule(
+      id,
+      title,
+      body,
+      scheduledTime,
+      _details(),
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      payload: id.toString(),
+    );
+  }
+
+  Future<void> cancelNotification(int id) async {
+    await init();
+    await _plugin.cancel(id);
+  }
+
+  Future<void> cancelAllNotifications() async {
+    await init();
+    await _plugin.cancelAll();
   }
 
   Future<void> showTestNotification() async {
