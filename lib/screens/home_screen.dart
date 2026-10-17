@@ -16,7 +16,6 @@ import 'statistics_screen.dart';
 import 'transaction_screen.dart';
 import 'budget_screen.dart';
 import 'notification_screen.dart';
-import 'backup_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -2102,11 +2101,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: _settings.isBangla ? 'রিমাইন্ডার' : 'Reminder',
                     onTap: () => _openScreen(const NotificationScreen()),
                   ),
-                  _drawerItem(
-                    icon: Icons.backup_rounded,
-                    title: _settings.isBangla ? 'ব্যাকআপ ও রিস্টোর' : 'Backup & Restore',
-                    onTap: () => _openScreen(const BackupScreen()),
-                  ),
+                  
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
