@@ -2104,9 +2104,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   _drawerItem(
                     icon: Icons.backup_rounded,
-                    title: _settings.isBangla
-                    ? 'ব্যাকআপ ও রিস্টোর'
-                    : 'Backup & Restore',
+                    title: _settings.isBangla ? 'ব্যাকআপ ও রিস্টোর' : 'Backup & Restore',
                     onTap: () => _openScreen(const BackupScreen()),
                   ),
                   Padding(
