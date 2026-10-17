@@ -2101,7 +2101,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: _settings.isBangla ? 'রিমাইন্ডার' : 'Reminder',
                     onTap: () => _openScreen(const NotificationScreen()),
                   ),
-                  
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
