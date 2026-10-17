@@ -52,7 +52,11 @@ jobs:
             --org com.sydmahadi \
             --project-name amar_hisab \
             .
-
+      - name: Verify generated plugin registration
+        run: |
+          flutter pub get
+          test -f .flutter-plugins-dependencies
+          grep -n "shared_preferences" .flutter-plugins-dependencies
       - name: Configure Android Gradle versions
         run: |
           python3 - <<'PY'
