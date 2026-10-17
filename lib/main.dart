@@ -10,18 +10,24 @@ import 'theme/app_theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize the existing database without deleting user data.
   await MoneyDb.instance.init();
-
-  // Initialize saved language and theme settings.
   await AppSettings.instance.init();
 
-  // Initialize notifications and request permission.
-  await NotificationService.instance.init();
-  await NotificationService.instance.requestPermission();
-  await NotificationService.instance.syncFinancialReminders();
-
   runApp(const AmarHisabApp());
+
+  _initializeNotifications();
+}
+
+Future<void> _initializeNotifications() async {
+  try {
+    final service = NotificationService.instance;
+    await service.init();
+    await service.requestPermission();
+    await service.syncFinancialReminders();
+  } catch (e, stackTrace) {
+    debugPrint('NOTIFICATION ERROR: $e');
+    debugPrintStack(stackTrace: stackTrace);
+  }
 }
 
 class AmarHisabApp extends StatefulWidget {
@@ -45,9 +51,7 @@ class _AmarHisabAppState extends State<AmarHisabApp> {
   }
 
   void _settingsChanged() {
-    if (mounted) {
-      setState(() {});
-    }
+    if (mounted) setState(() {});
   }
 
   @override
