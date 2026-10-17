@@ -9,6 +9,18 @@ import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize the existing database without deleting user data.
+  await MoneyDb.instance.init();
+
+  // Initialize saved language and theme settings.
+  await AppSettings.instance.init();
+
+  // Initialize notifications and request permission.
+  await NotificationService.instance.init();
+  await NotificationService.instance.requestPermission();
+  await NotificationService.instance.syncFinancialReminders();
+
   runApp(const AmarHisabApp());
 }
 
@@ -20,30 +32,10 @@ class AmarHisabApp extends StatefulWidget {
 }
 
 class _AmarHisabAppState extends State<AmarHisabApp> {
-  late Future<void> _startup;
-
   @override
   void initState() {
     super.initState();
     AppSettings.instance.addListener(_settingsChanged);
-    _startup = _initializeApp();
-  }
-
-  Future<void> _initializeApp() async {
-    await MoneyDb.instance.init();
-    await AppSettings.instance.init();
-  }
-
-  Future<void> _initializeNotifications() async {
-    try {
-      final service = NotificationService.instance;
-      await service.init();
-      await service.requestPermission();
-      await service.syncFinancialReminders();
-    } catch (e, stackTrace) {
-      debugPrint('NOTIFICATION ERROR: $e');
-      debugPrintStack(stackTrace: stackTrace);
-    }
   }
 
   @override
@@ -53,7 +45,9 @@ class _AmarHisabAppState extends State<AmarHisabApp> {
   }
 
   void _settingsChanged() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -62,51 +56,12 @@ class _AmarHisabAppState extends State<AmarHisabApp> {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'আমার হিসাব',
+      title: settings.t('appName'),
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode:
           settings.isDarkMode ? ThemeMode.dark : ThemeMode.light,
-      home: FutureBuilder<void>(
-        future: _startup,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Scaffold(
-              body: Center(
-                child: CircularProgressIndicator(),
-              ),
-            );
-          }
-
-          if (snapshot.hasError) {
-            return Scaffold(
-              appBar: AppBar(title: const Text('Startup Error')),
-              body: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: SelectableText(
-                  'অ্যাপ চালু করতে সমস্যা হয়েছে।\n\n'
-                  '${snapshot.error}',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    color: Colors.red,
-                  ),
-                ),
-              ),
-            );
-          }
-
-          _startNotificationsOnce();
-          return const HomeScreen();
-        },
-      ),
+      home: const HomeScreen(),
     );
-  }
-
-  bool _notificationsStarted = false;
-
-  void _startNotificationsOnce() {
-    if (_notificationsStarted) return;
-    _notificationsStarted = true;
-    _initializeNotifications();
   }
 }
