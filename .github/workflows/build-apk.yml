@@ -129,6 +129,26 @@ jobs:
       - name: Get Flutter dependencies
         run: flutter pub get
 
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Show SharedPreferences versions
+        run: |
+          echo "=== pubspec.lock versions ==="
+          grep -n -A8 -E '^  shared_preferences(_android|_platform_interface)?:$' pubspec.lock || true
+
+          echo "=== Plugin registration ==="
+          grep -n -A4 -B2 'shared_preferences' .flutter-plugins-dependencies || true
+
+          echo "=== Android plugin folders ==="
+          find "$HOME/.pub-cache/hosted/pub.dev" \
+            -maxdepth 1 \
+            -type d \
+            -name 'shared_preferences_android-*' \
+            -print
+
+      - name: Configure Android app Gradle
+
       - name: Configure Android app Gradle
         run: |
           python3 - <<'PY'
